@@ -144,6 +144,8 @@ export type DeckBuildPaneProps = {
   onOpenCardInfo: (card: Card) => void;
   /** Fired when measured deck card width changes (library matches this). */
   onSlotWidthChange?: (slotWidthPx: number) => void;
+  /** Override header title (e.g. One Piece main deck count). */
+  deckTitle?: string;
 };
 
 export function DeckBuildPane({
@@ -159,6 +161,7 @@ export function DeckBuildPane({
   onRemoveCopy,
   onOpenCardInfo,
   onSlotWidthChange,
+  deckTitle,
 }: DeckBuildPaneProps) {
   const { t } = useTranslation();
   const { setNodeRef, isOver } = useDroppable({ id: 'deck-drop' });
@@ -222,7 +225,9 @@ export function DeckBuildPane({
   return (
     <div className={styles.wrap}>
       <div className={headerStyles.header}>
-        <span className={headerStyles.title}>{t('DECK_EDIT_YOUR_DECK_COUNT', { count: deckCount })}</span>
+        <span className={headerStyles.title}>
+          {deckTitle ?? t('DECK_EDIT_YOUR_DECK_COUNT', { count: deckCount })}
+        </span>
         <div className={headerStyles.aside}>
           {showLibraryToggle ? (
             <button type="button" className={headerStyles.actionBtn} onClick={onToggleLibrary}>

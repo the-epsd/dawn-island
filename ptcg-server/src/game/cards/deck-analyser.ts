@@ -21,6 +21,10 @@ export class DeckAnalyser {
   }
 
   public isValid(format?: Format): boolean {
+    if (format === Format.ONE_PIECE) {
+      return this.isValidOnePieceDeck();
+    }
+
     const countMap: { [name: string]: number } = {};
     const prismStarCards = new Set<string>();
     let hasBasicPokemon = false;
@@ -125,6 +129,10 @@ export class DeckAnalyser {
     }
 
     return hasBasicPokemon;
+  }
+
+  private isValidOnePieceDeck(): boolean {
+    return this.cards.length === 60;
   }
 
 

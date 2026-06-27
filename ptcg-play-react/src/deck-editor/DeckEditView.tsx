@@ -16,6 +16,7 @@ import { ApiError } from '../api/apiError';
 import { deleteDeck, getDeck, saveDeck } from '../api/deckApi';
 import { useDeckCardScanUrl } from '../context/CardImagesContext';
 import { DeckBuildPane } from './DeckBuildPane';
+import { OpDeckBuildPane } from './OpDeckBuildPane';
 import { DeckEditInfoValidity } from './DeckEditInfoValidity';
 import { DeckEditToolbar } from './DeckEditToolbar';
 import { DeckLibraryPane } from './DeckLibraryPane';
@@ -36,6 +37,21 @@ import { sortLibraryCatalog } from './filterLibrary';
 import { useIncrementalFilteredLibrary } from './useIncrementalFilteredLibrary';
 import { DECK_DEFAULT_SLOT_W } from './deckCardLayout';
 import { defaultToolbarFilter, type DeckEditToolbarFilter, type DeckSlot } from './types';
+import {
+  addCardToOpMainDeck,
+  canAddOneOpMain,
+  canSetLeader,
+  donSlotsFromFlatNames,
+  ensureDonSlots,
+  filterOpCatalog,
+  flatNamesForOpSave,
+  isOpLeaderCard,
+  isOpMainDeckCard,
+  mainDeckFlatNames,
+  replaceDonSlotCard,
+  resolveLeaderFromDeck,
+  type DonSlot,
+} from './opDeckRules';
 import styles from './DeckEditView.module.css';
 
 const LS_DEFAULT_DECK_ID = 'defaultDeckId';
@@ -115,14 +131,19 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [ruleMessage, setRuleMessage] = useState<string | null>(null);
   const [cardInfoCard, setCardInfoCard] = useState<Card | null>(null);
+  const [cardInfoDonIndex, setCardInfoDonIndex] = useState<number | null>(null);
+  const [leader, setLeader] = useState<Card | null>(null);
+  const [donSlots, setDonSlots] = useState<DonSlot[]>([]);
   const [deckCardSlotW, setDeckCardSlotW] = useState(DECK_DEFAULT_SLOT_W);
+
+  const opMode = true;
 
   const isThemeDeck = deckId < 0;
   const disabled = isThemeDeck || loading;
   const isAdmin = user?.roleId === 4;
 
   const allCards = useMemo(
-    () => sortLibraryCatalog(cardsInfo?.cards ?? []),
+    () => sortLibraryCatalog(filterOpCatalog(cardsInfo?.cards ?? [])),
     [cardsInfo?.cards],
   );
   const byFullName = useMemo(() => {
@@ -143,19 +164,24 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
 
   const getScanUrl = useDeckCardScanUrl(serverConfig?.scansUrl);
 
+  const librarySource = useMemo(
+    () => filteredLibrary.filter((card) => isOpMainDeckCard(card) || isOpLeaderCard(card)),
+    [filteredLibrary],
+  );
+
   const saveDeckWithFlatCards = useCallback(
-    async (flatNames: string[]) => {
+    async (flatNames: string[], leaderFullName?: string) => {
       await saveDeck(
         deckId,
         deckName.trim(),
         flatNames,
-        manualArchetype1,
+        leaderFullName as Archetype | undefined,
         manualArchetype2,
         deckArtworks,
         sleeveIdentifier,
       );
     },
-    [deckId, deckName, manualArchetype1, manualArchetype2, deckArtworks, sleeveIdentifier],
+    [deckId, deckName, manualArchetype2, deckArtworks, sleeveIdentifier],
   );
 
   useEffect(() => {
@@ -166,6 +192,8 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
     }
     setDeckLinesFromServer(null);
     setSlots([]);
+    setLeader(null);
+    setDonSlots([]);
     setImportUnknown([]);
     setManualArchetype1(undefined);
     setManualArchetype2(undefined);
@@ -206,10 +234,17 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
     if (!cardsCatalogHash || byFullName.size === 0) {
       return;
     }
-    const { slots: next, unknown } = slotsFromFlatNames(deckLinesFromServer, byFullName);
+    const mainNames = opMode
+      ? mainDeckFlatNames(deckLinesFromServer, byFullName)
+      : deckLinesFromServer;
+    const { slots: next, unknown } = slotsFromFlatNames(mainNames, byFullName);
     setSlots(next);
+    if (opMode) {
+      setLeader(resolveLeaderFromDeck(manualArchetype1, byFullName));
+      setDonSlots(ensureDonSlots(donSlotsFromFlatNames(deckLinesFromServer, byFullName), byFullName));
+    }
     setImportUnknown(unknown);
-  }, [deckLinesFromServer, cardsCatalogHash, byFullName]);
+  }, [deckLinesFromServer, cardsCatalogHash, byFullName, manualArchetype1, opMode]);
 
   useEffect(() => {
     clipboardFromNavConsumed.current = false;
@@ -268,6 +303,13 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
   ]);
 
   useEffect(() => {
+    if (!opMode) {
+      return;
+    }
+    setFilter((f) => (f.selectedSet === 'OP01' ? f : { ...f, selectedSet: 'OP01' }));
+  }, [opMode]);
+
+  useEffect(() => {
     setFilter((f) => {
       const nextFormats = f.formats.filter((fmt) => !hiddenFormats.includes(fmt));
       if (nextFormats.length === f.formats.length) {
@@ -281,11 +323,33 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
 
   const inDeckCounts = useMemo(() => new Map(slots.map((s) => [s.card.fullName, s.count])), [slots]);
 
-  const canAddCard = useCallback((card: Card) => canAddOne(slots, card).ok, [slots]);
+  const canAddCard = useCallback(
+    (card: Card) => {
+      if (opMode && isOpLeaderCard(card)) {
+        return canSetLeader(card).ok;
+      }
+      if (opMode) {
+        return canAddOneOpMain(slots, card).ok;
+      }
+      return canAddOne(slots, card).ok;
+    },
+    [opMode, slots],
+  );
 
   const tryAdd = useCallback(
     (card: Card) => {
-      const res = addCardToDeck(slots, card);
+      if (opMode && isOpLeaderCard(card)) {
+        const gate = canSetLeader(card);
+        if (!gate.ok) {
+          setRuleMessage(gate.reason);
+          window.setTimeout(() => setRuleMessage(null), 3200);
+          return;
+        }
+        setRuleMessage(null);
+        setLeader(card);
+        return;
+      }
+      const res = opMode ? addCardToOpMainDeck(slots, card) : addCardToDeck(slots, card);
       if (!res.ok) {
         setRuleMessage(res.reason);
         window.setTimeout(() => setRuleMessage(null), 3200);
@@ -294,7 +358,7 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
       setRuleMessage(null);
       setSlots(res.slots);
     },
-    [slots],
+    [opMode, slots],
   );
 
   const tryAddByFullName = useCallback(
@@ -311,13 +375,16 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
     setSaving(true);
     setError(null);
     try {
-      await saveDeckWithFlatCards(flatNamesFromSlots(slots));
+      const flatNames = opMode
+        ? flatNamesForOpSave(slots, donSlots)
+        : flatNamesFromSlots(slots);
+      await saveDeckWithFlatCards(flatNames, leader?.fullName);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t('REACT_ERROR_SAVE_DECK'));
     } finally {
       setSaving(false);
     }
-  }, [slots, saveDeckWithFlatCards, t]);
+  }, [opMode, slots, donSlots, leader, saveDeckWithFlatCards, t]);
 
   const onDeleteDeck = useCallback(async () => {
     if (!window.confirm(t('DECK_DELETE_SELECTED'))) {
@@ -406,7 +473,7 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
   const libraryPane = (
     <DeckLibraryPane
       cardSlotW={deckCardSlotW}
-      cards={filteredLibrary}
+      cards={opMode ? librarySource : filteredLibrary}
       scanComplete={libraryScanComplete}
       onNearCatalogEnd={requestScrollBoost}
       getScanUrl={getScanUrl}
@@ -416,11 +483,48 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
       onRemoveOneFromDeck={(fullName) => setSlots((prev) => removeOneCopy(prev, fullName))}
       inDeckCounts={inDeckCounts}
       canAddCard={canAddCard}
-      onOpenCardInfo={(c) => setCardInfoCard(c)}
+      onOpenCardInfo={(c) => {
+        setCardInfoDonIndex(null);
+        setCardInfoCard(c);
+      }}
     />
   );
 
-  const deckPane = (
+  const deckPane = opMode ? (
+    <OpDeckBuildPane
+      leader={leader}
+      slots={slots}
+      donSlots={donSlots}
+      getScanUrl={getScanUrl}
+      disabled={disabled}
+      deckCount={deckCount}
+      ruleMessage={ruleMessage}
+      showLibraryToggle={!isNarrow}
+      libraryHidden={libraryHidden}
+      onToggleLibrary={() => setLibraryHidden((v) => !v)}
+      onAddCopy={tryAddByFullName}
+      onRemoveCopy={(fullName) => setSlots((prev) => removeOneCopy(prev, fullName))}
+      onOpenCardInfo={(c) => {
+        setCardInfoDonIndex(null);
+        setCardInfoCard(c);
+      }}
+      onOpenLeaderInfo={() => {
+        if (leader) {
+          setCardInfoDonIndex(null);
+          setCardInfoCard(leader);
+        }
+      }}
+      onClearLeader={() => setLeader(null)}
+      onOpenDonInfo={(index) => {
+        const slot = donSlots[index];
+        if (slot) {
+          setCardInfoDonIndex(index);
+          setCardInfoCard(slot.card);
+        }
+      }}
+      onSlotWidthChange={setDeckCardSlotW}
+    />
+  ) : (
     <DeckBuildPane
       slots={slots}
       getScanUrl={getScanUrl}
@@ -454,6 +558,7 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
             onImport={onImport}
             onDelete={isThemeDeck ? undefined : () => void onDeleteDeck()}
             deleting={deleting}
+            opMode={opMode}
           />
           {isThemeDeck && (
             <div className={styles.warnBanner}>{t('DECK_EDIT_THEME_READONLY')}</div>
@@ -505,7 +610,13 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
               {deckPane}
             </div>
           </div>
-          <DeckEditInfoValidity slots={slots} allCards={allCards} />
+          <DeckEditInfoValidity
+            slots={slots}
+            allCards={allCards}
+            opMode={opMode}
+            leader={leader}
+            donSlots={donSlots}
+          />
         </div>
         {cardInfoCard && (
           <CardInfoPopup
@@ -513,8 +624,21 @@ export function DeckEditView({ deckId }: DeckEditViewProps) {
             catalog={allCards}
             getScanUrl={getScanUrl}
             isInGame={false}
-            onClose={() => setCardInfoCard(null)}
+            onClose={() => {
+              setCardInfoCard(null);
+              setCardInfoDonIndex(null);
+            }}
             onCardSwap={({ originalCard, replacementCard }) => {
+              if (cardInfoDonIndex !== null) {
+                setDonSlots((prev) => replaceDonSlotCard(prev, cardInfoDonIndex, replacementCard));
+                setCardInfoCard(replacementCard);
+                return;
+              }
+              if (isOpLeaderCard(originalCard)) {
+                setLeader(replacementCard);
+                setCardInfoCard(replacementCard);
+                return;
+              }
               setSlots((prev) => replaceSlotCard(prev, originalCard.fullName, replacementCard));
               setCardInfoCard(replacementCard);
             }}

@@ -35,6 +35,17 @@ export class Player {
     return this.supporter;
   }
 
+  leader: CardList = new CardList();
+
+  /** One Piece: 10-card DON!! deck (separate from main deck). */
+  donDeck: CardList = new CardList();
+
+  /** One Piece: DON!! cost area on the field (up to 10). */
+  donArea: CardList = new CardList();
+
+  /** Set when joining a One Piece game; consumed during setup. */
+  leaderFullName?: string;
+
   active: PokemonCardList = new PokemonCardList();
 
   bench: PokemonCardList[] = [];

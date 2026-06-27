@@ -448,6 +448,20 @@ export class FormatValidator {
     if (!deck) {
       return false;
     }
+    if (format === Format.ONE_PIECE) {
+      const leader = deck.manualArchetype1?.trim();
+      if (!leader) {
+        return false;
+      }
+      if (deck.cards) {
+        return deck.cards.length === 60;
+      }
+      if (Array.isArray(deck.format) && deck.format.includes(format)) {
+        return true;
+      }
+      // Summary list: leader is stored outside the 60-card array; accept tagged OP leaders.
+      return deck.isValid === true || /\bOP\d{2}\b/.test(leader);
+    }
     if (deck.cards) {
       const requiredDeckSize = 60;
       return deck.cards.length === requiredDeckSize;

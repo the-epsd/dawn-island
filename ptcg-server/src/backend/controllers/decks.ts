@@ -41,26 +41,38 @@ export class Decks extends Controller {
     const decks = userDecks.map(deck => {
       const sleeveImagePath = deck.sleeveIdentifier ? sleeveMap.get(deck.sleeveIdentifier) : undefined;
       let format: number[];
+      const cardNames: string[] = JSON.parse(deck.cards);
       if (deck.formats && deck.formats.trim() !== '') {
         try {
           format = JSON.parse(deck.formats);
         } catch {
-          const cards = JSON.parse(deck.cards);
-          format = getValidFormatsForCardList(cards);
+          format = getValidFormatsForCardList(cardNames);
           // Persist so future list requests skip this work (fire-and-forget)
           Deck.update({ id: deck.id }, { formats: JSON.stringify(format) }).catch(() => { });
         }
       } else {
-        const cards = JSON.parse(deck.cards);
-        format = getValidFormatsForCardList(cards);
+        format = getValidFormatsForCardList(cardNames);
         // Persist so future list requests skip this work (fire-and-forget)
         Deck.update({ id: deck.id }, { formats: JSON.stringify(format) }).catch(() => { });
       }
+      format = appendOnePieceFormatIfValid(cardNames, format);
+      if (deck.formats && deck.formats.trim() !== '') {
+        try {
+          const stored = JSON.parse(deck.formats) as number[];
+          if (!stored.includes(Format.ONE_PIECE) && format.includes(Format.ONE_PIECE)) {
+            Deck.update({ id: deck.id }, { formats: JSON.stringify(format) }).catch(() => { });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const opDeckValid = new DeckAnalyser(cardNames).isValid(Format.ONE_PIECE);
 
       const base: Record<string, any> = {
         id: deck.id,
         name: deck.name,
-        isValid: deck.isValid,
+        isValid: deck.isValid || opDeckValid,
         manualArchetype1: deck.manualArchetype1,
         manualArchetype2: deck.manualArchetype2,
         format,
@@ -177,7 +189,7 @@ export class Decks extends Controller {
     const deckUtils = new DeckAnalyser(resolvedCards);
     deck.name = body.name.trim();
     deck.cards = JSON.stringify(resolvedCards);
-    deck.isValid = deckUtils.isValid();
+    deck.isValid = deckUtils.isValid(Format.ONE_PIECE) || deckUtils.isValid();
     deck.cardTypes = JSON.stringify(deckUtils.getDeckType());
     deck.manualArchetype1 = body.manualArchetype1 || '';
     deck.manualArchetype2 = body.manualArchetype2 || '';
@@ -1097,6 +1109,17 @@ function isPrintingLegalInStandardNightly(card: any): boolean {
     standardRegulationMarkAllowed(card);
 }
 
+// --- appendOnePieceFormatIfValid ---
+function appendOnePieceFormatIfValid(cardNames: string[], formatList: number[]): number[] {
+  const analyser = new DeckAnalyser(cardNames);
+  if (!analyser.isValid(Format.ONE_PIECE)) {
+    return formatList;
+  }
+  return formatList.includes(Format.ONE_PIECE)
+    ? formatList
+    : [...formatList, Format.ONE_PIECE];
+}
+
 // --- getValidFormatsForCardList --- (exported for backfill script)
 export function getValidFormatsForCardList(cardNames: string[]): number[] {
   const cardManager = CardManager.getInstance();
@@ -1199,7 +1222,7 @@ export function getValidFormatsForCardList(cardNames: string[]): number[] {
       f !== Format.RETRO
     );
   }
-  return formatList;
+  return appendOnePieceFormatIfValid(cardNames, formatList);
 }
 
 // --- getValidFormats ---

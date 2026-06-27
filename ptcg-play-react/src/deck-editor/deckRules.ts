@@ -114,17 +114,19 @@ function insertOrdered(list: DeckSlot[], newSlot: DeckSlot): DeckSlot[] {
   return sortDeckSlots(next);
 }
 
-export function addCardToDeck(slots: DeckSlot[], card: Card): AddCardResult {
-  const gate = canAddOne(slots, card);
-  if (!gate.ok) {
-    return gate;
+export function addCardToDeck(slots: DeckSlot[], card: Card, opts?: { unlimitedCopies?: boolean }): AddCardResult {
+  if (!opts?.unlimitedCopies) {
+    const gate = canAddOne(slots, card);
+    if (gate.ok === false) {
+      return { ok: false, reason: gate.reason };
+    }
   }
   const idx = slots.findIndex((c) => c.card.fullName === card.fullName);
   if (idx === -1) {
     return { ok: true, slots: insertOrdered(slots, { card, count: 1 }) };
   }
   const next = slots.map((s, i) => (i === idx ? { ...s, count: s.count + 1 } : s));
-  if (!isBasicEnergy(card) && getSameNameCount(next, card.name) > 4) {
+  if (!opts?.unlimitedCopies && !isBasicEnergy(card) && getSameNameCount(next, card.name) > 4) {
     return { ok: false, reason: 'Maximum 4 copies per card name (except basic Energy).' };
   }
   return { ok: true, slots: sortDeckSlots(next) };

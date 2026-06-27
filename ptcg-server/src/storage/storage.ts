@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import path from 'path';
 import { Connection, createConnection, EntityManager } from 'typeorm';
 import {
   Avatar, Conversation, Deck, DisconnectedSession, Match, Message, Replay, User,
@@ -13,17 +14,21 @@ export class Storage {
   constructor() { }
 
   public async connect(): Promise<void> {
-    const storageConfig: any = {
-      type: process.env.STORAGE_TYPE,
-      host: process.env.STORAGE_HOST,
-      port: process.env.STORAGE_PORT,
-      username: process.env.STORAGE_USERNAME,
-      password: process.env.STORAGE_DATABASE_PASSWORD,
-      database: process.env.STORAGE_DATABASE
-    };
+    const storageType = process.env.STORAGE_TYPE || 'sqlite';
+    const storageConfig: Record<string, unknown> = { type: storageType };
+
+    if (storageType === 'sqlite') {
+      storageConfig.database = process.env.STORAGE_DATABASE || path.join(process.cwd(), 'database.sq3');
+    } else {
+      storageConfig.host = process.env.STORAGE_HOST;
+      storageConfig.port = process.env.STORAGE_PORT;
+      storageConfig.username = process.env.STORAGE_USERNAME;
+      storageConfig.password = process.env.STORAGE_DATABASE_PASSWORD;
+      storageConfig.database = process.env.STORAGE_DATABASE;
+    }
 
     this.connection = await createConnection({
-      ...storageConfig,
+      ...(storageConfig as any),
       timezone: 'Z',
       entities: [
         Avatar,

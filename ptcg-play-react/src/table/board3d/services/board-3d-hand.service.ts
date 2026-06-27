@@ -52,6 +52,42 @@ export class Board3dHandService {
   }
 
   /**
+   * Cancel in-flight draw animations (self-play focus change, switch sides).
+   * Clears hand meshes and resets batch-draw lock state so a fresh sync can run.
+   */
+  abortInFlightDrawWork(attachRoot?: Object3D, worldAttachRoot?: Object3D): void {
+    while (this.batchDrawPrepareDepth > 0) {
+      this.endBatchDrawPrepare();
+    }
+    this.isUpdating = false;
+    this.clearHand(attachRoot);
+    this.drainPendingR3fHandDisposals();
+    if (worldAttachRoot) {
+      this.disposeOrphanFlyingDrawCards(worldAttachRoot);
+    }
+  }
+
+  /** Flying draw meshes detached from handGroup (mid-animation) that clearHand may miss. */
+  disposeOrphanFlyingDrawCards(worldRoot: Object3D): void {
+    const orphans: Object3D[] = [];
+    worldRoot.traverse((obj) => {
+      if (obj.userData?.drawingFromDeck) {
+        orphans.push(obj);
+      }
+    });
+    for (const cardGroup of orphans) {
+      gsap.killTweensOf(cardGroup.position);
+      gsap.killTweensOf(cardGroup.rotation);
+      gsap.killTweensOf(cardGroup.scale);
+      const board3dCard = cardGroup.userData.drawBoard3dCard as Board3dCard | undefined;
+      if (board3dCard) {
+        board3dCard.dispose();
+      }
+      cardGroup.removeFromParent();
+    }
+  }
+
+  /**
    * Update hand cards based on player's hand
    */
   async updateHand(

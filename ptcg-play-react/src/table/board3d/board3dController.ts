@@ -77,7 +77,7 @@ import {
   worldPositionForSupporterMeshId,
 } from './board3dMeshIdForPlayTarget';
 import { DropZoneType } from './board-3d-drop-zone';
-import { getBenchPositions, ZONE_POSITIONS } from './board-3d-zone-positions';
+import { getBenchPositions, getDonAreaSlotPositions, getDonDeckPosition, ZONE_POSITIONS, OP_CHARACTER_SCALE } from './board-3d-zone-positions';
 import { r3fPointerEventAsMouse } from './board3dR3fPointer';
 import { subscribeBoard3dInteractionStreams } from './board3dControllerSubscriptions';
 import type { Board3dCard } from './board-3d-card';
@@ -131,6 +131,7 @@ export class Board3dController {
   private boardCenterOverlay?: Mesh;
 
   // Per-slot outlines (always visible, independent of drop zones)
+  private viewportAspect = 1.6;
   private topBenchSpotOutlines: Group[] = [];
   private bottomBenchSpotOutlines: Group[] = [];
   private otherSpotOutlines: Group[] = [];
@@ -182,6 +183,10 @@ export class Board3dController {
   private syncHandChain: Promise<void> = Promise.resolve();
   /** Incremented when a failed play must supersede queued/in-flight hand sync (skip stale commits). */
   private handSyncInvalidationGen = 0;
+  /** Setup hands already revealed on the board (`playerId:sortedCardIds`). */
+  private setupHandDisplayedKeys = new Set<string>();
+  /** Prevents duplicate opening/mulligan draw animations for the same hand. */
+  private setupHandDrawInFlightKey: string | undefined = undefined;
 
   /** Board mesh ids hidden while one or more hand-play flights are in progress. */
   private handPlayFlightHiddenMeshIds = new Set<string>();
@@ -303,22 +308,14 @@ export class Board3dController {
     // Create drop zone indicators (async) with actual bench sizes
     const bottomBenchSize = this.bottomPlayer?.bench?.length ?? 5;
     const topBenchSize = this.topPlayer?.bench?.length ?? 5;
-    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize).then(rebuilt => {
-      if (rebuilt) {
-        this.createBenchSpotOutlines(bottomBenchSize, topBenchSize);
-      }
+    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize, true).then(() => {
+      this.createBenchSpotOutlines(bottomBenchSize, topBenchSize);
       this.markDirty();
     });
 
     // Sync initial game state if available
     if (this.gameState) {
       this.syncGameState();
-    }
-
-    // Sync initial hand if available
-    if (this.bottomPlayerHand) {
-      this.syncHand();
-      this.hasInitializedHand = true;
     }
 
     this.selectionSubs.push(
@@ -341,20 +338,13 @@ export class Board3dController {
 
     const bottomBenchSize = this.bottomPlayer?.bench?.length ?? 5;
     const topBenchSize = this.topPlayer?.bench?.length ?? 5;
-    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize).then(rebuilt => {
-      if (rebuilt) {
-        this.createBenchSpotOutlines(bottomBenchSize, topBenchSize);
-      }
+    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize, true).then(() => {
+      this.createBenchSpotOutlines(bottomBenchSize, topBenchSize);
       this.markDirty();
     });
 
     if (this.gameState) {
       this.syncGameState();
-    }
-
-    if (this.bottomPlayerHand) {
-      this.syncHand();
-      this.hasInitializedHand = true;
     }
 
     this.selectionSubs.push(
@@ -369,6 +359,10 @@ export class Board3dController {
     );
 
     this.stateSync.setBoardInteractionForDamagePreview(this.boardInteractionService);
+  }
+
+  private setupHandKey(playerId: number, cardIds: number[]): string {
+    return `${playerId}:${[...cardIds].sort((a, b) => a - b).join(',')}`;
   }
 
   /** Called from React when props change after mount. */
@@ -392,6 +386,10 @@ export class Board3dController {
       if (this.topPlayer) {
         this.rebuildPrizeIdToGridFromPlayerPrizes(this.topPlayer, this.lastTopPrizeIdToGrid);
       }
+    }
+
+    if (this.scene && bottomChanged) {
+      this.abortHandWorkForPerspectiveChange();
     }
 
     this.setProps(next);
@@ -418,8 +416,9 @@ export class Board3dController {
       this.syncGameState();
     }
 
-    if (this.scene && handChanged) {
-      this.syncHand();
+    if (this.scene && this.bottomPlayerHand && (handChanged || !this.hasInitializedHand)) {
+      const isSetup = next.gameState?.state?.phase === GamePhase.SETUP;
+      this.syncHand(bottomChanged && !isSetup ? { immediate: true } : undefined);
       this.hasInitializedHand = true;
     }
   }
@@ -493,6 +492,8 @@ export class Board3dController {
     this.lastHandSyncActivePlayerId = undefined;
     this.syncHandChain = Promise.resolve();
     this.handSyncInvalidationGen = 0;
+    this.setupHandDisplayedKeys.clear();
+    this.setupHandDrawInFlightKey = undefined;
     this.handPlayFlightHiddenMeshIds.clear();
     this.handPlayBoardBasicAnimationSuppressedMeshIds.clear();
     this.discardVisualFreezePlayerId = null;
@@ -785,6 +786,7 @@ export class Board3dController {
     if (width === 0 || height === 0) return;
 
     const aspect = width / height;
+    this.viewportAspect = aspect;
 
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
@@ -1130,8 +1132,8 @@ export class Board3dController {
     const bottomBenchSize = this.bottomPlayer?.bench?.length ?? 5;
     const topBenchSize = this.topPlayer?.bench?.length ?? 5;
 
-    // Recreate drop zones with updated bench sizes
-    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize).then(rebuilt => {
+    // Recreate drop zones only when bench sizes change.
+    this.interactionService.createDropZoneIndicators(this.scene, bottomBenchSize, topBenchSize).then((rebuilt) => {
       if (rebuilt) {
         this.createBenchSpotOutlines(bottomBenchSize, topBenchSize);
       }
@@ -1164,11 +1166,13 @@ export class Board3dController {
 
     const w = Board3dController.CARD_SLOT_WIDTH;
     const h = Board3dController.CARD_SLOT_HEIGHT;
-    const benchW = Board3dController.BENCH_SLOT_WIDTH;
-    const benchH = Board3dController.BENCH_SLOT_HEIGHT;
+    const benchW = Board3dController.BENCH_SLOT_WIDTH * OP_CHARACTER_SCALE;
+    const benchH = Board3dController.BENCH_SLOT_HEIGHT * OP_CHARACTER_SCALE;
+    const charW = w * OP_CHARACTER_SCALE;
+    const charH = h * OP_CHARACTER_SCALE;
 
     // Bench slots
-    const topPositions = getBenchPositions(topBenchSize, PlayerType.TOP_PLAYER);
+    const topPositions = getBenchPositions(topBenchSize, PlayerType.TOP_PLAYER, this.viewportAspect);
     for (const pos of topPositions) {
       const group = this.createSpotOutlineGroup(
         pos,
@@ -1180,7 +1184,7 @@ export class Board3dController {
       this.topBenchSpotOutlines.push(group);
       this.scene.add(group);
     }
-    const bottomPositions = getBenchPositions(bottomBenchSize, PlayerType.BOTTOM_PLAYER);
+    const bottomPositions = getBenchPositions(bottomBenchSize, PlayerType.BOTTOM_PLAYER, this.viewportAspect);
     for (const pos of bottomPositions) {
       const group = this.createSpotOutlineGroup(
         pos,
@@ -1196,14 +1200,20 @@ export class Board3dController {
     // Stadium (single shared slot)
     this.addSpotOutline(ZONE_POSITIONS.stadium, w, h);
 
-    // Active, supporter, deck, discard (each player)
+    // Active, supporter, deck, discard, DON (each player)
     for (const position of ['bottomPlayer', 'topPlayer'] as const) {
       const zp = ZONE_POSITIONS[position];
-      this.addSpotOutline(zp.active, w, h);
+      const benchSize = position === 'bottomPlayer' ? bottomBenchSize : topBenchSize;
+      this.addSpotOutline(zp.active, charW, charH);
       this.addSpotOutline(zp.supporter, w, h);
-      this.addSpotOutline(zp.deck, w, h);
-      this.addSpotOutline(zp.discard, w, h);
+      this.addSpotOutline(zp.deck, charW, charH);
+      this.addSpotOutline(zp.discard, charW, charH);
       this.addSpotOutline(zp.lostZone, w, h);
+      const donPlayerType = position === 'bottomPlayer' ? PlayerType.BOTTOM_PLAYER : PlayerType.TOP_PLAYER;
+      this.addSpotOutline(getDonDeckPosition(donPlayerType, this.viewportAspect, benchSize), charW, charH);
+      for (const pos of getDonAreaSlotPositions(donPlayerType, this.viewportAspect, benchSize)) {
+        this.addSpotOutline(pos, charW, charH);
+      }
     }
 
     // Prize slots (6 per player, 2x3 grid - match board-3d-prize.service layout)
@@ -1214,7 +1224,7 @@ export class Board3dController {
         const offsetX = (col - 0.5) * 3;
         const offsetZ = (row - 1) * 4;
         const pos = new Vector3(basePos.x + offsetX, basePos.y, basePos.z + offsetZ);
-        this.addSpotOutline(pos, w, h);
+        this.addSpotOutline(pos, charW, charH);
       }
     }
   }
@@ -1362,10 +1372,11 @@ export class Board3dController {
       return null;
     }
     const slot = ev.slot;
+    const slotKey = slot === undefined || slot === null ? '' : String(slot);
     const isActive =
-      slot === 'active' || slot === String(SlotType.ACTIVE);
+      slotKey === 'active' || slotKey === String(SlotType.ACTIVE);
     const isBench =
-      slot === 'bench' || slot === String(SlotType.BENCH);
+      slotKey === 'bench' || slotKey === String(SlotType.BENCH);
     if (isActive) {
       return `${pos}_${ev.playerId}_active`;
     }
@@ -1508,8 +1519,10 @@ export class Board3dController {
 
       const isTopPlayer = meshId.startsWith('topPlayer_');
       const endRotationY = isTopPlayer ? Math.PI : 0;
-      const isActive = meshId.endsWith('_active');
-      const endScale = isActive ? 1.5 : 1.0;
+      const isActive = meshId.endsWith('_active') || meshId.endsWith('_leader');
+      const isBenchCharacter =
+        meshId.includes('_bench_') && data?.superType === SuperType.CHARACTER;
+      const endScale = isActive ? 1.5 : isBenchCharacter ? OP_CHARACTER_SCALE : 1.0;
 
       gsap.killTweensOf(group.position);
       gsap.killTweensOf(group.rotation);
@@ -1554,7 +1567,7 @@ export class Board3dController {
     tryPlay(0);
   }
 
-  private syncHand(): void {
+  private syncHand(opts?: { immediate?: boolean }): void {
     // Skip sync if user is currently dragging a card to prevent destroying the dragged card
     if (this.interactionService.getIsDragging()) {
       return;
@@ -1570,7 +1583,20 @@ export class Board3dController {
       this.scene.add(handGroup);
     }
 
-    this.syncHandChain = this.syncHandChain.then(() => this.runSyncHandOnce());
+    this.syncHandChain = this.syncHandChain.then(() => this.runSyncHandOnce(opts));
+  }
+
+  /**
+   * Self-play focus / switch-sides swaps the bottom hand while draw flights may still be running
+   * into the shared hand slot. Invalidate queued sync, kill animations, and clear in-flight meshes.
+   */
+  private abortHandWorkForPerspectiveChange(): void {
+    this.handSyncInvalidationGen++;
+    this.setupHandDrawInFlightKey = undefined;
+    this.animationService.killAllAnimations();
+    this.handService.abortInFlightDrawWork(this.handSlot, this.worldContentRoot);
+    this.boardInteractionService.setPendingHandDrawAnimationPromise(null);
+    this.syncHandChain = Promise.resolve();
   }
 
   /** After server rejects playCard: skip animation queue and rebuild hand from current props immediately. */
@@ -1677,7 +1703,8 @@ export class Board3dController {
     gs: State | undefined,
     ourTurnJustBegan: boolean,
     bottomId: number | undefined,
-    nowActivePlayerId: number | undefined
+    nowActivePlayerId: number | undefined,
+    useSetupMulliganPreset = false
   ): HandDrawFlightSegment[] {
     if (incoming.length === 0) {
       return [];
@@ -1712,7 +1739,7 @@ export class Board3dController {
       (ourTurnJustBegan ||
         (gs.turn === 1 && bottomId !== undefined && nowActivePlayerId === bottomId));
 
-    if (gs?.phase === GamePhase.SETUP) {
+    if (gs?.phase === GamePhase.SETUP || useSetupMulliganPreset) {
       segs.push({ ids: deckPart, preset: 'setupMulligan' });
       return segs;
     }
@@ -1745,8 +1772,10 @@ export class Board3dController {
     aspect: number,
     boardConfig: ReturnType<typeof getBoardConfig>,
     prizeFlightOrigins: ReadonlyMap<number, PrizeFlightOrigin>,
-    totalDeckDrawsFull: number
+    totalDeckDrawsFull: number,
+    handSyncGenAtStart: number
   ): Promise<boolean> {
+    const handSyncStillValid = () => this.handSyncInvalidationGen === handSyncGenAtStart;
     const isFromPrize = (id: number) => prizeFlightOrigins.has(id);
 
     const flightStartAtGlobal = (stepInFull: number): Vector3 => {
@@ -1774,6 +1803,9 @@ export class Board3dController {
     let globalBase = 0;
 
     for (const seg of segments) {
+      if (!handSyncStillValid()) {
+        return false;
+      }
       const drawCount = seg.ids.length;
       const drawFlightPreset = seg.preset;
 
@@ -1810,6 +1842,9 @@ export class Board3dController {
               visualPreset: drawFlightPreset
             }
           );
+          if (!handSyncStillValid()) {
+            return false;
+          }
           this.handService.finishDrawFlight(prep.flyingCard, finalTotal);
         } finally {
           this.handService.endBatchDrawPrepare();
@@ -1875,6 +1910,10 @@ export class Board3dController {
               targetStageScale: batchStageScale,
               visualPreset: drawFlightPreset
             });
+            if (!handSyncStillValid()) {
+              aborted = true;
+              return;
+            }
             staged[localStep] = prep.flyingCard;
           };
 
@@ -1899,6 +1938,9 @@ export class Board3dController {
           await new Promise<void>(resolve => {
             setTimeout(resolve, getMultiDrawSharedHoldSec(drawFlightPreset) * 1000);
           });
+          if (!handSyncStillValid()) {
+            return false;
+          }
           await Promise.all(
             staged.map((card, i) =>
               this.animationService.playDrawStageToHand(
@@ -1912,6 +1954,9 @@ export class Board3dController {
               )
             )
           );
+          if (!handSyncStillValid()) {
+            return false;
+          }
           for (let i = 0; i < drawCount; i++) {
             this.handService.finishDrawFlight(staged[i], finalTotal);
           }
@@ -1934,20 +1979,27 @@ export class Board3dController {
         return;
       }
 
+      const ownerIdAtStart = this.bottomPlayer.id;
+
       if (
         this.lastHandOwnerPlayerId !== undefined &&
-        this.bottomPlayer.id !== this.lastHandOwnerPlayerId
+        ownerIdAtStart !== this.lastHandOwnerPlayerId
       ) {
         this.lastHandCardIds = [];
         this.lastHandSyncActivePlayerId = undefined;
       }
 
       const nextIds = this.bottomPlayerHand.cards.map(c => c.id);
+      const prevIds = this.lastHandCardIds;
+      const prevLen = prevIds.length;
+      const handShrank = nextIds.length < prevLen;
+      const useImmediateHandSync = opts?.immediate || (prevLen > 0 && handShrank);
 
-      if (opts?.immediate) {
+      if (useImmediateHandSync) {
         if (genAtStart !== this.handSyncInvalidationGen) {
           return;
         }
+        this.handService.disposeOrphanFlyingDrawCards(this.worldContentRoot);
         const isOwnerImm = this.bottomPlayer.id === this.clientId || this.isReplayOmniscient();
         const playableImm = this.isReplayOmniscient()
           ? undefined
@@ -1961,8 +2013,11 @@ export class Board3dController {
         if (genAtStart !== this.handSyncInvalidationGen) {
           return;
         }
+        if (this.bottomPlayer.id !== ownerIdAtStart) {
+          return;
+        }
         this.lastHandCardIds = nextIds;
-        this.lastHandOwnerPlayerId = this.bottomPlayer.id;
+        this.lastHandOwnerPlayerId = ownerIdAtStart;
         this.refreshBottomPrizeSnapshotFromCurrentState();
         if (this.gameState?.state) {
           const s = this.gameState.state;
@@ -1970,11 +2025,11 @@ export class Board3dController {
         }
         this.interactionService.updateInteractiveObjects(this.scene);
         this.markDirty();
+        if (this.r3fMode) {
+          this.stateSync.publishSceneModel(this.handService.getHandSlotSnapshots());
+        }
         return;
       }
-
-      const prevIds = this.lastHandCardIds;
-      const prevLen = prevIds.length;
 
       let prefixK = 0;
       const maxPrefix = Math.min(prevLen, nextIds.length);
@@ -2000,6 +2055,12 @@ export class Board3dController {
 
       const stableK = Math.max(prefixK, overlapK);
       const drawCount = nextIds.length - stableK;
+      const gs = this.gameState?.state;
+      const isSetupPhase = gs?.phase === GamePhase.SETUP;
+      const isOpeningHandDraw = prevLen === 0 && nextIds.length > 0 && isSetupPhase;
+      const staleBaselineEmptyHand =
+        !isSetupPhase && prevLen === 0 && nextIds.length > 0 && this.hasInitializedHand;
+      const isSetupOpeningDraw = isSetupPhase && isOpeningHandDraw;
 
       const handIdsSameMultiset = (a: number[], b: number[]): boolean => {
         if (a.length !== b.length) {
@@ -2021,10 +2082,23 @@ export class Board3dController {
         stableK < prevLen &&
         handIdsSameMultiset(prevIds, nextIds);
 
-      // Playing a card removes from hand (shorter). Deck draws keep size or grow; never treat a shrink as draw.
-      const handShrank = nextIds.length < prevLen;
-      const shouldAnimateDraw =
+      const isSetupMulliganRedraw =
+        isSetupPhase &&
         prevLen > 0 &&
+        prevLen === nextIds.length &&
+        stableK === 0 &&
+        drawCount === nextIds.length &&
+        !handIdsSameMultiset(prevIds, nextIds);
+      const isSetupHandReveal = isSetupOpeningDraw || isSetupMulliganRedraw;
+      const setupHandKey = this.setupHandKey(ownerIdAtStart, nextIds);
+
+      if (isSetupHandReveal && this.setupHandDrawInFlightKey === setupHandKey) {
+        this.lastHandCardIds = nextIds;
+        return;
+      }
+
+      const shouldAnimateDraw =
+        (prevLen > 0 || isOpeningHandDraw) &&
         !handShrank &&
         drawCount >= 1 &&
         !looksLikeHandReorderOnly;
@@ -2038,7 +2112,6 @@ export class Board3dController {
 
       const incomingDrawIds = nextIds.slice(stableK);
 
-      const gs = this.gameState?.state;
       const nowActivePlayerId = gs ? gs.players[gs.activePlayer]?.id : undefined;
       const bottomId = this.bottomPlayer?.id;
       const ourTurnJustBegan =
@@ -2049,10 +2122,26 @@ export class Board3dController {
         this.lastHandSyncActivePlayerId !== undefined &&
         this.lastHandSyncActivePlayerId !== bottomId;
 
-      // Option A (setup UX): never deck-flight the hand during SETUP — avoids 7× mulligan
-      // parades when an empty-hand stateChange is missed and diff looks like a full redraw.
-      const shouldAnimateDrawEffective =
-        shouldAnimateDraw && gs?.phase !== GamePhase.SETUP;
+      // During SETUP only animate genuine opening hands / mulligan redraws (0 → N).
+      // Skip spurious full redraws when an empty-hand stateChange was missed (prevLen > 0, stableK = 0).
+      const looksLikeSpuriousSetupFullRedraw =
+        isSetupPhase &&
+        prevLen > 0 &&
+        stableK === 0 &&
+        drawCount === nextIds.length &&
+        !isSetupMulliganRedraw;
+      const alreadyDisplayedSetupHand = isSetupHandReveal && this.setupHandDisplayedKeys.has(setupHandKey);
+      let shouldAnimateDrawEffective =
+        shouldAnimateDraw &&
+        (!isSetupPhase || isSetupHandReveal) &&
+        !looksLikeSpuriousSetupFullRedraw &&
+        !alreadyDisplayedSetupHand &&
+        !staleBaselineEmptyHand;
+
+      if (isSetupMulliganRedraw && shouldAnimateDrawEffective) {
+        this.handService.abortInFlightDrawWork(this.handSlot, this.worldContentRoot);
+        this.lastHandCardIds = [];
+      }
 
       if (import.meta.env.DEV && gs?.phase === GamePhase.SETUP) {
         const incomingPreview =
@@ -2067,12 +2156,23 @@ export class Board3dController {
           handShrank,
           shouldAnimateDraw,
           shouldAnimateDrawEffective,
+          isSetupOpeningDraw,
+          isOpeningHandDraw,
+          isSetupMulliganRedraw,
+          alreadyDisplayedSetupHand,
           handClearedToEmpty: prevLen > 0 && nextIds.length === 0,
           incomingPreview,
         });
       }
 
-      if (shouldAnimateDrawEffective && incomingDrawIds.length > 0) {
+      if (alreadyDisplayedSetupHand && isSetupHandReveal) {
+        await this.handService.updateHand(
+          this.bottomPlayerHand,
+          isOwner,
+          this.handSlot,
+          playableCardIds
+        );
+      } else if (shouldAnimateDrawEffective && incomingDrawIds.length > 0) {
         const prizeFlightOrigins = this.buildPrizeFlightOrigins(incomingDrawIds);
         const isFromPrizeForSegments = (id: number) => prizeFlightOrigins.has(id);
         const totalDeckDrawsThisSync = incomingDrawIds.filter(id => !prizeFlightOrigins.has(id)).length;
@@ -2082,20 +2182,42 @@ export class Board3dController {
           gs,
           ourTurnJustBegan,
           bottomId,
-          nowActivePlayerId
+          nowActivePlayerId,
+          isOpeningHandDraw || isSetupMulliganRedraw
         );
-        const animated = await this.runAnimatedHandDrawSegments(
-          segments,
-          incomingDrawIds,
-          stableK,
-          nextIds.length,
-          isOwner,
-          playableCardIds,
-          aspect,
-          boardConfig,
-          prizeFlightOrigins,
-          totalDeckDrawsThisSync
-        );
+        const runHandDrawAnimation = () =>
+          this.runAnimatedHandDrawSegments(
+            segments,
+            incomingDrawIds,
+            stableK,
+            nextIds.length,
+            isOwner,
+            playableCardIds,
+            aspect,
+            boardConfig,
+            prizeFlightOrigins,
+            totalDeckDrawsThisSync,
+            genAtStart
+          );
+        let animated: boolean;
+        this.setupHandDrawInFlightKey = setupHandKey;
+        try {
+          if (isSetupOpeningDraw) {
+            const drawPromise = runHandDrawAnimation();
+            this.boardInteractionService.setPendingHandDrawAnimationPromise(drawPromise.then(() => undefined));
+            try {
+              animated = await drawPromise;
+            } finally {
+              this.boardInteractionService.setPendingHandDrawAnimationPromise(null);
+            }
+          } else {
+            animated = await runHandDrawAnimation();
+          }
+        } finally {
+          if (this.setupHandDrawInFlightKey === setupHandKey) {
+            this.setupHandDrawInFlightKey = undefined;
+          }
+        }
         if (genAtStart !== this.handSyncInvalidationGen) {
           return;
         }
@@ -2107,7 +2229,14 @@ export class Board3dController {
             playableCardIds
           );
         }
+        if (isSetupHandReveal && animated) {
+          this.setupHandDisplayedKeys.add(setupHandKey);
+        }
+        if (isSetupOpeningDraw) {
+          this.boardInteractionService.markSetupOpeningHandDrawCompleted();
+        }
       } else {
+        this.handService.disposeOrphanFlyingDrawCards(this.worldContentRoot);
         await this.handService.updateHand(
           this.bottomPlayerHand,
           isOwner,
@@ -2119,8 +2248,11 @@ export class Board3dController {
       if (genAtStart !== this.handSyncInvalidationGen) {
         return;
       }
+      if (this.bottomPlayer.id !== ownerIdAtStart) {
+        return;
+      }
       this.lastHandCardIds = nextIds;
-      this.lastHandOwnerPlayerId = this.bottomPlayer.id;
+      this.lastHandOwnerPlayerId = ownerIdAtStart;
       this.refreshBottomPrizeSnapshotFromCurrentState();
       if (this.gameState?.state) {
         const s = this.gameState.state;

@@ -53,6 +53,7 @@ import { Attack } from '../card/pokemon-types';
 import { GamePhase } from '../state/state';
 import { canPlayDualStadium } from '../dual-stadium-utils';
 import { PokemonCard } from '../card/pokemon-card';
+import { CharacterCard } from '../card/character-card';
 import {
   AbstractAttackEffect,
   AddSpecialConditionsEffect,
@@ -3663,6 +3664,33 @@ export function CAN_PLAY_POKEMON_CARD(
 }
 
 /**
+ * Check if a One Piece character can be played from hand to an open bench slot.
+ */
+export function CAN_PLAY_CHARACTER_CARD(
+  store: StoreLike,
+  state: State,
+  player: Player,
+  _characterCard: CharacterCard,
+): boolean {
+  try {
+    if (
+      state.phase !== GamePhase.PLAYER_TURN ||
+      state.players[state.activePlayer].id !== player.id
+    ) {
+      return false;
+    }
+
+    if (state.gameSettings?.format !== Format.ONE_PIECE) {
+      return false;
+    }
+
+    return player.bench.some(bench => bench.cards.length === 0);
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
  * Universal function to check if any card can be played
  * @param store The store instance
  * @param state The current game state
@@ -3678,6 +3706,8 @@ export function CAN_PLAY_CARD(store: StoreLike, state: State, player: Player, ca
       return CAN_PLAY_ENERGY_CARD(store, state, player, card);
     } else if (card instanceof PokemonCard) {
       return CAN_PLAY_POKEMON_CARD(store, state, player, card);
+    } else if (card instanceof CharacterCard || card.superType === SuperType.CHARACTER) {
+      return CAN_PLAY_CHARACTER_CARD(store, state, player, card as CharacterCard);
     }
     return false;
   } catch (error) {

@@ -13,6 +13,7 @@ interface QueuedPlayer {
   artworks?: { code: string; artworkId?: number }[];
   deckId?: number;
   sleeveImagePath?: string;
+  leaderFullName?: string;
   sandboxMode?: boolean;
   joinedAt: number;
   lastValidated: number;
@@ -42,7 +43,7 @@ export class MatchmakingService {
     return MatchmakingService.instance;
   }
 
-  public addToQueue(client: Client, socketWrapper: SocketWrapper, format: Format, deck: string[], artworks?: { code: string; artworkId?: number }[], deckId?: number, sleeveImagePath?: string, sandboxMode?: boolean): void {
+  public addToQueue(client: Client, socketWrapper: SocketWrapper, format: Format, deck: string[], artworks?: { code: string; artworkId?: number }[], deckId?: number, sleeveImagePath?: string, sandboxMode?: boolean, leaderFullName?: string): void {
     // Remove if already in queue
     this.removeFromQueue(client);
 
@@ -59,6 +60,7 @@ export class MatchmakingService {
       artworks,
       deckId,
       sleeveImagePath,
+      leaderFullName,
       sandboxMode,
       joinedAt: Date.now(),
       lastValidated: Date.now()
@@ -211,7 +213,9 @@ export class MatchmakingService {
           player1.deckId,
           player2.deckId,
           player1.sleeveImagePath,
-          player2.sleeveImagePath
+          player2.sleeveImagePath,
+          player1.leaderFullName,
+          player2.leaderFullName,
         );
 
         if (game) {

@@ -632,6 +632,27 @@ export class BoardInteractionService {
     return this.pendingAttackAnimationPromise;
   }
 
+  /** Latest setup opening-hand / mulligan redraw animation on the 3D board. */
+  private pendingHandDrawAnimationPromise: Promise<void> | null = null;
+  /** When the last setup opening-hand draw animation finished (ms since epoch). */
+  private setupOpeningHandDrawCompletedAt = 0;
+
+  public setPendingHandDrawAnimationPromise(p: Promise<void> | null): void {
+    this.pendingHandDrawAnimationPromise = p;
+  }
+
+  public getPendingHandDrawAnimationPromise(): Promise<void> | null {
+    return this.pendingHandDrawAnimationPromise;
+  }
+
+  public markSetupOpeningHandDrawCompleted(): void {
+    this.setupOpeningHandDrawCompletedAt = Date.now();
+  }
+
+  public getSetupOpeningHandDrawCompletedAt(): number {
+    return this.setupOpeningHandDrawCompletedAt;
+  }
+
   public triggerCoinFlipAnimation(result: boolean, playerId: number) {
     this.coinFlipAnimationSubject.next({ result, playerId });
   }

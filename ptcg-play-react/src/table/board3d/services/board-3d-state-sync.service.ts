@@ -19,7 +19,7 @@ import { Board3dAnimationService } from './board-3d-animation.service';
 import { Board3dCardOverlayService } from './board-3d-card-overlay.service';
 import { Board3dStackService } from './board-3d-stack.service';
 import { Board3dPrizeService } from './board-3d-prize.service';
-import { ZONE_POSITIONS, getBenchPositions } from '../board-3d-zone-positions';
+import { ZONE_POSITIONS, getBenchPositions, getDonAreaPositions, getDonDeckPosition, OP_CHARACTER_SCALE } from '../board-3d-zone-positions';
 import { apply3dCardHolo } from '../board-3d-holo-apply';
 import type { Board3dBoardCardSnapshot, Board3dHandSlotSnapshot, Board3dSceneModelSnapshot } from '../board3dSceneModel';
 import { emptySceneModelSnapshot } from '../board3dSceneModel';
@@ -281,8 +281,30 @@ export class Board3dStateSyncService {
     const playerPrefix = `${position}_${player.id}`;
     const playerType = position === 'topPlayer' ? PlayerType.TOP_PLAYER : PlayerType.BOTTOM_PLAYER;
 
-    // Active and Supporter - run in parallel (independent zones)
-    const activePromise = player.active && player.active.cards.length > 0
+    // Leader (One Piece) or Active Pokémon — back row (Active slot)
+    const leaderPromise = player.leader && player.leader.cards.length > 0
+      ? (() => {
+        const sleeveImagePath = this.getSleeveImagePath(player.leader, player);
+        return this.updateCard(
+          player.leader,
+          `${playerPrefix}_leader`,
+          ZONE_POSITIONS[position].active,
+          true,
+          rotation,
+          { player: playerType, slot: SlotType.ACTIVE, index: 0 },
+          OP_CHARACTER_SCALE,
+          sleeveImagePath
+        );
+      })()
+      : Promise.resolve(undefined).then(() => {
+        this.removeCard(`${playerPrefix}_leader`);
+      });
+
+    const activePromise = player.leader && player.leader.cards.length > 0
+      ? Promise.resolve(undefined).then(() => {
+        this.removeCard(`${playerPrefix}_active`);
+      })
+      : player.active && player.active.cards.length > 0
       ? (() => {
         const sleeveImagePath = this.getSleeveImagePath(player.active, player);
         return this.updateCard(
@@ -292,7 +314,7 @@ export class Board3dStateSyncService {
           isOwner,
           rotation,
           { player: playerType, slot: SlotType.ACTIVE, index: 0 },
-          1.5,
+          OP_CHARACTER_SCALE,
           sleeveImagePath
         );
       })()
@@ -319,7 +341,7 @@ export class Board3dStateSyncService {
             this.removeCard(`${playerPrefix}_supporter`);
           });
 
-    await Promise.all([activePromise, supporterPromise]);
+    await Promise.all([leaderPromise, activePromise, supporterPromise]);
 
     // Bench Pokemon - load all in parallel
     const benchPositions = getBenchPositions(player.bench.length, playerType);
@@ -334,7 +356,7 @@ export class Board3dStateSyncService {
           isOwner,
           rotation,
           { player: playerType, slot: SlotType.BENCH, index: i },
-          1.0,
+          OP_CHARACTER_SCALE,
           sleeveImagePath
         );
       } else {
@@ -343,6 +365,57 @@ export class Board3dStateSyncService {
       }
     });
     await Promise.all(benchPromises);
+
+    // DON!! deck stack (separate from main deck) — face-down like the main deck
+    const donDeckStackId = `${playerPrefix}_don_deck`;
+    if (player.donDeck && player.donDeck.cards.length > 0) {
+      const donDeckSleeve =
+        (player.donDeck as { sleeveImagePath?: string }).sleeveImagePath ??
+        (player.deck as { sleeveImagePath?: string }).sleeveImagePath ??
+        (player as { sleeveImagePath?: string }).sleeveImagePath;
+      await this.stackService.updateDeckStack(
+        donDeckStackId,
+        player.donDeck.cards.length,
+        getDonDeckPosition(playerType, undefined, player.bench.length),
+        rotation,
+        this.worldMount,
+        donDeckSleeve,
+        player.donDeck,
+        this.updateCard.bind(this),
+        this.getCardById.bind(this),
+        OP_CHARACTER_SCALE
+      );
+    } else {
+      this.stackService.removeStack(donDeckStackId, this.worldMount, true);
+      this.removeCard(`${donDeckStackId}_top`);
+    }
+
+    // DON!! cost area (up to 10 individual cards)
+    const donCount = player.donArea?.cards.length ?? 0;
+    const donPositions = getDonAreaPositions(donCount, playerType, undefined, player.bench.length);
+    const donPromises: Promise<void>[] = [];
+    for (let i = 0; i < donCount; i++) {
+      const donCard = player.donArea.cards[i];
+      const cardId = `${playerPrefix}_don_area_${i}`;
+      const donList = new CardList();
+      donList.cards.push(donCard);
+      donList.isPublic = true;
+      donPromises.push(
+        this.updateCard(
+          donList,
+          cardId,
+          donPositions[i],
+          true,
+          rotation,
+          undefined,
+          OP_CHARACTER_SCALE
+        )
+      );
+    }
+    for (let i = donCount; i < 10; i++) {
+      this.removeCard(`${playerPrefix}_don_area_${i}`);
+    }
+    await Promise.all(donPromises);
 
     // Deck stack
     if (player.deck && player.deck.cards.length > 0) {
@@ -355,7 +428,8 @@ export class Board3dStateSyncService {
         (player.deck as any)?.sleeveImagePath,
         player.deck,
         this.updateCard.bind(this),
-        this.getCardById.bind(this)
+        this.getCardById.bind(this),
+        OP_CHARACTER_SCALE
       );
     }
 
@@ -373,7 +447,8 @@ export class Board3dStateSyncService {
           rotation,
           this.worldMount,
           this.updateCard.bind(this),
-          this.getCardById.bind(this)
+          this.getCardById.bind(this),
+          OP_CHARACTER_SCALE
         );
       } else {
         const discardStackId = `${playerPrefix}_discard`;
@@ -453,6 +528,7 @@ export class Board3dStateSyncService {
     [bottomPlayer, topPlayer].forEach(player => {
       if (!player) return;
       const isOwner = player.id === currentPlayerId || omniscient;
+      if (player.leader) collectFromCardList(player.leader, true);
       if (player.active) collectFromCardList(player.active, isOwner);
       if (player.supporter) collectFromCardList(player.supporter, isOwner);
       player.bench?.forEach(bench => collectFromCardList(bench, isOwner));
@@ -465,6 +541,14 @@ export class Board3dStateSyncService {
         collectFromCardList(topList, true);
       }
       player.prizes?.forEach(prize => collectFromCardList(prize, isOwner));
+      if (player.donArea) {
+        player.donArea.cards.forEach(card => {
+          const list = new CardList();
+          list.cards = [card];
+          list.isPublic = true;
+          collectFromCardList(list, true);
+        });
+      }
     });
 
     const stadium = state?.players?.find((p: Player) => p.stadium?.cards?.length > 0)?.stadium;

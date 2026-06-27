@@ -80,7 +80,8 @@ export class PromptInvitePlayerComponent implements OnInit {
           const deck = deckResponse.deck.cards;
           this.gameService.resolvePrompt(gameId, id, {
             deck,
-            sleeveImagePath: deckResponse.deck.sleeveImagePath
+            sleeveImagePath: deckResponse.deck.sleeveImagePath,
+            leaderFullName: deckResponse.deck.manualArchetype1 || undefined,
           });
         },
         error: (error: ApiError) => {

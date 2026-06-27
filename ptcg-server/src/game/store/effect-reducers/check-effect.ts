@@ -2,6 +2,7 @@ import { GameError } from '../../game-error';
 import { GameLog, GameMessage } from '../../game-message';
 import { PlayerType, SlotType } from '../actions/play-card-action';
 import { EnergyCard } from '../card/energy-card';
+import { Format } from '../card/card-types';
 import { PokemonCard } from '../card/pokemon-card';
 import { CheckHpEffect, CheckProvidedEnergyEffect, CheckTableStateEffect } from '../effects/check-effects';
 import { Effect } from '../effects/effect';
@@ -161,6 +162,12 @@ function handleBenchSizeChange(store: StoreLike, state: State, benchSizes: numbe
 }
 
 function chooseActivePokemons(state: State): ChoosePokemonPrompt[] {
+  // One Piece: leader is in the leader zone and characters stay on the bench.
+  // An empty Active slot is normal — never prompt to promote bench to Active.
+  if (state.gameSettings?.format === Format.ONE_PIECE) {
+    return [];
+  }
+
   const prompts: ChoosePokemonPrompt[] = [];
 
   for (const player of state.players) {
@@ -337,8 +344,8 @@ export function checkWinner(store: StoreLike, state: State, onComplete?: () => v
   for (let i = 0; i < state.players.length; i++) {
     const player = state.players[i];
 
-    // Check for no active Pokemon
-    if (player.active.cards.length === 0) {
+    // One Piece uses the leader zone; an empty Active slot is normal during setup and play.
+    if (state.gameSettings?.format !== Format.ONE_PIECE && player.active.cards.length === 0) {
       store.log(state, GameLog.LOG_PLAYER_NO_ACTIVE_POKEMON, { name: player.name });
       points[i === 0 ? 1 : 0]++;
       reasons[i === 0 ? 1 : 0].push('no_active');
@@ -378,6 +385,9 @@ export function checkWinner(store: StoreLike, state: State, onComplete?: () => v
 }
 
 function initiateSuddenDeath(store: StoreLike, state: State): State {
+  if (state.gameSettings?.format === Format.ONE_PIECE) {
+    return state;
+  }
   store.log(state, GameLog.LOG_SUDDEN_DEATH);
 
   // Reset decks

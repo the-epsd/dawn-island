@@ -5,14 +5,29 @@ import { Format, SuperType } from 'ptcg-server';
 import { formatOptionLabel } from './formatLabelI18n';
 import { FormatValidator } from './formatValidator';
 import type { DeckSlot } from './types';
+import {
+  isOpDeckComplete,
+  mainDeckCount,
+  type DonSlot,
+} from './opDeckRules';
+import { OP_DON_DECK_SIZE, OP_MAIN_DECK_SIZE } from './opDeckConfig';
 import styles from './DeckEditInfoValidity.module.css';
 
 export type DeckEditInfoValidityProps = {
   slots: DeckSlot[];
   allCards: Card[];
+  opMode?: boolean;
+  leader?: Card | null;
+  donSlots?: DonSlot[];
 };
 
-export function DeckEditInfoValidity({ slots, allCards }: DeckEditInfoValidityProps) {
+export function DeckEditInfoValidity({
+  slots,
+  allCards,
+  opMode = false,
+  leader = null,
+  donSlots = [],
+}: DeckEditInfoValidityProps) {
   const { t } = useTranslation();
   const { total, pokemon, trainer, energy } = useMemo(() => {
     let t = 0;
@@ -48,6 +63,10 @@ export function DeckEditInfoValidity({ slots, allCards }: DeckEditInfoValidityPr
   const [validFormats, setValidFormats] = useState<Format[]>([]);
 
   useEffect(() => {
+    if (opMode) {
+      startTransition(() => setValidFormats([]));
+      return;
+    }
     if (deferredFlat.length === 0) {
       startTransition(() => setValidFormats([]));
       return;
@@ -55,7 +74,28 @@ export function DeckEditInfoValidity({ slots, allCards }: DeckEditInfoValidityPr
     startTransition(() => {
       setValidFormats(FormatValidator.getValidFormatsForCardList(deferredFlat, deferredAll));
     });
-  }, [deferredFlat, deferredAll]);
+  }, [deferredFlat, deferredAll, opMode]);
+
+  if (opMode) {
+    const mainCount = mainDeckCount(slots);
+    const complete = isOpDeckComplete(leader, slots, donSlots);
+    return (
+      <footer className={styles.bar}>
+        <div className={styles.counts}>
+          <span>{t('OP_DECK_VALIDITY_LEADER', { count: leader ? 1 : 0 })}</span>
+          <span>{t('OP_DECK_VALIDITY_MAIN', { count: mainCount, max: OP_MAIN_DECK_SIZE })}</span>
+          <span>{t('OP_DECK_VALIDITY_DON', { count: donSlots.length, max: OP_DON_DECK_SIZE })}</span>
+        </div>
+        <div className={styles.formats}>
+          {complete ? (
+            <span className={styles.chip}>{t('OP_DECK_VALIDITY_COMPLETE')}</span>
+          ) : (
+            <span className={styles.chipMuted}>{t('OP_DECK_VALIDITY_INCOMPLETE')}</span>
+          )}
+        </div>
+      </footer>
+    );
+  }
 
   return (
     <footer className={styles.bar}>

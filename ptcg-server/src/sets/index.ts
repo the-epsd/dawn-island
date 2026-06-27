@@ -195,6 +195,10 @@ export * from './set-30th-celebration';
 //TEST
 export * from './set-test';
 
+// One Piece Card Game
+export * from './don';
+export * from './op01';
+
 //Sort Later
 export * from './set-legends-awakened';
 export * from './set-stormfront';

@@ -95,7 +95,8 @@ export const config = {
       'https://api.pokemontcg.io',
       'https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com',
       'https://www.serebii.net',
-      'https://www.pokemonproxies.com'
+      'https://www.pokemonproxies.com',
+      'https://oppp.online'
     ]
   },
   email: {

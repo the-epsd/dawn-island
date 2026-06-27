@@ -1,0 +1,8 @@
+ptcg-server/dist
+ptcg-play/dist
+node_modules
+.env
+ptcg-server/node_modules
+ptcg-play/node_modules
+ptcg-server/output
+ptcg-play/output

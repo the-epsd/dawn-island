@@ -1,6 +1,6 @@
 import { Action } from '../actions/action';
 import {
-  AttachEnergyEffect, PlayPokemonEffect, PlayStadiumEffect,
+  AttachEnergyEffect, PlayPokemonEffect, PlayCharacterEffect, PlayStadiumEffect,
   PlaySupporterEffect, AttachPokemonToolEffect, PlayItemEffect
 } from '../effects/play-card-effects';
 import { EnergyCard } from '../card/energy-card';
@@ -8,11 +8,12 @@ import { GameError } from '../../game-error';
 import { GameMessage } from '../../game-message';
 import { PlayCardAction, CardTarget, PlayerType, SlotType } from '../actions/play-card-action';
 import { PokemonCard } from '../card/pokemon-card';
+import { CharacterCard } from '../card/character-card';
 import { PokemonCardList } from '../state/pokemon-card-list';
 import { State, GamePhase } from '../state/state';
 import { StoreLike } from '../store-like';
 import { TrainerCard } from '../card/trainer-card';
-import { TrainerType, CardTag } from '../card/card-types';
+import { TrainerType, CardTag, SuperType } from '../card/card-types';
 import { assembleDualStadiumFromHand } from '../dual-stadium-utils';
 import { Effect } from '../effects/effect';
 import { StateUtils } from '../state-utils';
@@ -91,6 +92,27 @@ export function playCardReducer(store: StoreLike, state: State, action: Action):
         return store.reduceEffect(state, effect);
       }
 
+      if (handCard instanceof CharacterCard || handCard.superType === SuperType.CHARACTER) {
+        const target = findPokemonTarget(state, player, action.target);
+        if (!(target instanceof PokemonCardList)) {
+          throw new GameError(GameMessage.INVALID_TARGET);
+        }
+        if (action.target.slot !== SlotType.BENCH) {
+          throw new GameError(GameMessage.INVALID_TARGET);
+        }
+        if (target.cards.length > 0) {
+          throw new GameError(GameMessage.INVALID_TARGET);
+        }
+
+        const effect = new PlayCharacterEffect(
+          player,
+          handCard as CharacterCard,
+          target,
+          action.target.index,
+        );
+        return store.reduceEffect(state, effect);
+      }
+
       if (handCard instanceof TrainerCard) {
         const target = findPokemonTarget(state, player, action.target);
         let effect: Effect;
@@ -132,7 +154,8 @@ export function playCardReducer(store: StoreLike, state: State, action: Action):
         }
         return store.reduceEffect(state, effect);
       }
-      player.hand.moveCardTo(handCard, player.supporter);
+
+      throw new GameError(GameMessage.CANNOT_PLAY_THIS_CARD);
     }
 
   }

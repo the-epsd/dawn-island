@@ -43,6 +43,8 @@ export type DeckEditToolbarProps = {
   /** When set, shows Delete (e.g. omit for theme / read-only decks). */
   onDelete?: () => void;
   deleting?: boolean;
+  /** One Piece deck builder: hide Pokémon-specific filters. */
+  opMode?: boolean;
 };
 
 export function DeckEditToolbar({
@@ -58,6 +60,7 @@ export function DeckEditToolbar({
   onImport,
   onDelete,
   deleting = false,
+  opMode = false,
 }: DeckEditToolbarProps) {
   const { t } = useTranslation();
   const { hiddenFormats } = useSettings();
@@ -158,6 +161,13 @@ export function DeckEditToolbar({
               inputClassName={styles.plainSearchInput}
             />
           </div>
+          {opMode ? (
+            <div className={styles.group}>
+              <h3 className={styles.groupTitle}>{t('OP_DECK_LIBRARY_SET')}</h3>
+              <p className={styles.opSetNote}>OP01</p>
+            </div>
+          ) : (
+            <>
           <div className={styles.group}>
             <h3 className={styles.groupTitle}>{t('DECK_EDIT_CARD_TYPE_GROUP')}</h3>
             <div className={styles.superRow}>
@@ -256,6 +266,8 @@ export function DeckEditToolbar({
               </button>
             )}
           </div>
+            </>
+          )}
         </div>
       </div>
     </header>

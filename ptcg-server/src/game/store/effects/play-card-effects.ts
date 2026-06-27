@@ -2,6 +2,7 @@ import { Effect } from './effect';
 import { EnergyCard } from '../card/energy-card';
 import { Player } from '../state/player';
 import { PokemonCard } from '../card/pokemon-card';
+import { CharacterCard } from '../card/character-card';
 import { PokemonCardList } from '../state/pokemon-card-list';
 import { TrainerCard } from '../card/trainer-card';
 import { CardList } from '../state/card-list';
@@ -12,6 +13,7 @@ import { SlotType } from '../actions/play-card-action';
 export enum PlayCardEffects {
   ATTACH_ENERGY_EFFECT = 'ATTACH_ENERGY_EFFECT',
   PLAY_POKEMON_EFFECT = 'PLAY_POKEMON_EFFECT',
+  PLAY_CHARACTER_EFFECT = 'PLAY_CHARACTER_EFFECT',
   PLAY_POKEMON_FROM_DECK_EFFECT = 'PLAY_POKEMON_FROM_DECK_EFFECT',
   PLAY_POKEMON_FROM_DISCARD_EFFECT = 'PLAY_POKEMON_FROM_DISCARD_EFFECT',
   PLAY_SUPPORTER_EFFECT = 'PLAY_SUPPORTER_EFFECT',
@@ -61,6 +63,23 @@ export class PlayPokemonEffect implements Effect {
     if (pokemonCard.stage === Stage.BASIC) {
       this.target.showBasicAnimation = true;
     }
+  }
+}
+
+export class PlayCharacterEffect implements Effect {
+  readonly type: string = PlayCardEffects.PLAY_CHARACTER_EFFECT;
+  public preventDefault = false;
+  public player: Player;
+  public characterCard: CharacterCard;
+  public target: PokemonCardList;
+  public index: number;
+
+  constructor(player: Player, characterCard: CharacterCard, target: PokemonCardList, index: number) {
+    this.player = player;
+    this.characterCard = characterCard;
+    this.target = target;
+    this.index = index;
+    this.target.showBasicAnimation = true;
   }
 }
 

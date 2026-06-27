@@ -214,6 +214,9 @@ cardManager.defineSet(sets.set30thCelebration);
 
 cardManager.defineSet(sets.setTest);
 
+cardManager.defineSet(sets.setOP01);
+cardManager.defineSet(sets.setDon);
+
 cardManager.defineSet(sets.setLegendsAwakened);
 cardManager.defineSet(sets.setStormfront);
 cardManager.defineSet(sets.setMajesticDawn);

@@ -1,5 +1,6 @@
 import { Object3D, Vector3 } from 'three';
 import { Player, CardList } from 'ptcg-server';
+import { OP_CHARACTER_SCALE } from '../board-3d-zone-positions';
 import { Board3dStackService, type UpdateCardCallback, type GetCardByIdCallback } from './board-3d-stack.service';
 
 // Callback type for removing cards (to avoid circular dependency)
@@ -61,7 +62,7 @@ export class Board3dPrizeService {
           isOwner,
           rotation,
           undefined, // No cardTarget for prizes
-          1.0, // Normal scale
+          OP_CHARACTER_SCALE,
           sleeveImagePath
         ).then(() => {
           // Mark prize card for click detection

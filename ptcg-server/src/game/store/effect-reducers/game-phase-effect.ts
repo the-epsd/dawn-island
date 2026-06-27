@@ -3,7 +3,7 @@ import { EndTurnEffect, BetweenTurnsEffect, BeginTurnEffect, DrawCardForTurnEffe
 import { GameError } from '../../game-error';
 import { GameMessage, GameLog } from '../../game-message';
 import { Player } from '../state/player';
-import { BoardEffect, SpecialCondition } from '../card/card-types';
+import { BoardEffect, SpecialCondition, Format } from '../card/card-types';
 import { State, GamePhase, GameWinner } from '../state/state';
 import { StoreLike } from '../store-like';
 import { checkState, endGame } from './check-effect';
@@ -11,6 +11,7 @@ import { CoinFlipPrompt } from '../prompts/coin-flip-prompt';
 import { PlayerType } from '../actions/play-card-action';
 import { MarkerConstants } from '../markers/marker-constants';
 import { StateUtils } from '../state-utils';
+import { addDonFromDeckToArea, getDonRefreshCountForTurn } from '../reducers/op-don-utils';
 
 function getActivePlayer(state: State): Player {
   return state.players[state.activePlayer];
@@ -61,6 +62,11 @@ export function initNextTurn(store: StoreLike, state: State): State {
   // Clear movement tracking for the new turn
   player.movedToActiveThisTurn = [];
   player.movedFromActiveToBenchThisTurn = [];
+
+  const isOnePiece = state.gameSettings?.format === Format.ONE_PIECE;
+  if (isOnePiece) {
+    addDonFromDeckToArea(player, getDonRefreshCountForTurn(state.turn));
+  }
 
   // Skip draw card on first turn
   if (state.turn === 1 && !state.rules.firstTurnDrawCard) {

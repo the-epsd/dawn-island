@@ -23,6 +23,7 @@ import { WhoBeginsEffect } from '../effects/game-phase-effects';
 import { PokemonCard } from '../card/pokemon-card';
 import { ShowMulliganPrompt } from '../prompts/show-mulligan-prompt';
 import { ConfirmPrompt } from '../prompts/confirm-prompt';
+import { isOnePieceFormat, setupOnePieceGame } from './setup-op-reducer';
 
 function sandboxAllPokemonBasicEnabled(state: State): boolean {
   return Boolean(state.gameSettings?.sandboxMode && state.gameSettings?.sandboxAllPokemonBasic);
@@ -338,6 +339,10 @@ function* alternativeSetupSinglePlayer(player: Player, chooseCardsOptions: any, 
 }
 
 export function* setupGame(next: Function, store: StoreLike, state: State): IterableIterator<State> {
+  if (isOnePieceFormat(state.gameSettings?.format)) {
+    return yield* setupOnePieceGame(next, store, state);
+  }
+
   // Check if alternative setup rule is enabled
   if (state.rules.alternativeSetup) {
     return yield* alternativeSetupGame(next, store, state);
@@ -593,8 +598,8 @@ function createPlayer(id: number, name: string, format?: Format): Player {
   player.id = id;
   player.name = name;
 
-  // Pre-Release format uses 4 prize cards, all other formats use 6
-  const prizeCount = format === Format.PRE_RELEASE ? 4 : 6;
+  // Pre-Release format uses 4 prize cards, One Piece life cards are placed during OP setup, others use 6
+  const prizeCount = format === Format.ONE_PIECE ? 0 : (format === Format.PRE_RELEASE ? 4 : 6);
   // Empty prizes, places for prize cards
   for (let i = 0; i < prizeCount; i++) {
     const prize = new CardList();
@@ -614,6 +619,9 @@ function createPlayer(id: number, name: string, format?: Format): Player {
   player.lostzone.isPublic = true;
   player.stadium.isPublic = true;
   player.supporter.isPublic = true;
+  player.leader.isPublic = true;
+  player.donDeck.isSecret = true;
+  player.donArea.isPublic = true;
   return player;
 }
 
@@ -643,6 +651,7 @@ export function setupPhaseReducer(store: StoreLike, state: State, action: Action
       player.deck = CardList.fromList(action.deck);
       player.deckId = action.deckId;
       player.sleeveImagePath = action.sleeveImagePath;
+      player.leaderFullName = action.leaderFullName;
       // Attach alternate artwork map to player's lists so clients can resolve images
       if (action.artworksMap) {
         const lists: any[] = [
@@ -652,6 +661,9 @@ export function setupPhaseReducer(store: StoreLike, state: State, action: Action
           player.lostzone,
           player.stadium,
           player.supporter,
+          player.leader,
+          player.donDeck,
+          player.donArea,
           player.active,
           ...player.bench,
           ...player.prizes
@@ -668,6 +680,9 @@ export function setupPhaseReducer(store: StoreLike, state: State, action: Action
           player.lostzone,
           player.stadium,
           player.supporter,
+          player.leader,
+          player.donDeck,
+          player.donArea,
           player.active,
           ...player.bench,
           ...player.prizes
@@ -734,6 +749,12 @@ export function setupPhaseReducer(store: StoreLike, state: State, action: Action
 
         player.deck = CardList.fromList(deckCards);
         player.deck.isSecret = true;
+        const leaderFullName: string | undefined = Array.isArray(deckPayload)
+          ? undefined
+          : (deckPayload?.leaderFullName ?? deckPayload?.manualArchetype1);
+        if (leaderFullName) {
+          player.leaderFullName = leaderFullName;
+        }
         if (sleeveImagePath) {
           const lists: any[] = [
             player.deck,
@@ -742,6 +763,7 @@ export function setupPhaseReducer(store: StoreLike, state: State, action: Action
             player.lostzone,
             player.stadium,
             player.supporter,
+            player.leader,
             player.active,
             ...player.bench,
             ...player.prizes

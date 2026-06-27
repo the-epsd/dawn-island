@@ -118,7 +118,8 @@ export class Board3dStackService {
     sleeveImagePath: string | undefined,
     deckCardList: CardList,
     updateCardCallback: UpdateCardCallback,
-    getCardByIdCallback: GetCardByIdCallback
+    getCardByIdCallback: GetCardByIdCallback,
+    stackScale: number = 1
   ): Promise<void> {
     const bulkNeeded = Math.max(0, cardCount - 1);
     const sleeveKey = sleeveImagePath ?? '';
@@ -183,7 +184,7 @@ export class Board3dStackService {
         cardBackTexture!,
         new Vector3(0, i * Board3dStackService.STACK_HEIGHT_INCREMENT, 0),
         rotation,
-        1,
+        stackScale,
         maskTexture,
       );
       const g = boardCard.getGroup();
@@ -215,6 +216,10 @@ export class Board3dStackService {
       topCardList.cards = [topCard];
       topCardList.isPublic = deckCardList.isPublic;
       topCardList.isSecret = deckCardList.isSecret;
+      if (stackId.endsWith('_don_deck')) {
+        topCardList.isSecret = true;
+        topCardList.isPublic = false;
+      }
 
       await updateCardCallback(
         topCardList,
@@ -223,7 +228,7 @@ export class Board3dStackService {
         false, // Not owner - ensures face-down
         rotation,
         undefined, // No cardTarget
-        1.0,
+        stackScale,
         sleeveImagePath
       );
 
@@ -231,6 +236,9 @@ export class Board3dStackService {
       const topCardMesh = getCardByIdCallback(topCardId);
       if (topCardMesh) {
         topCardMesh.getGroup().userData.isDeck = true;
+        if (stackId.endsWith('_don_deck')) {
+          topCardMesh.getGroup().userData.isDonDeck = true;
+        }
         topCardMesh.getGroup().userData.cardList = deckCardList; // Set full deck CardList, not just single card
         // Top player (rotation=180): add 180° on Z so face-down card back matches other top player cards
         if (rotation === 180) {
@@ -251,7 +259,8 @@ export class Board3dStackService {
     rotation: number,
     attachRoot: Object3D,
     updateCardCallback: UpdateCardCallback,
-    getCardByIdCallback: GetCardByIdCallback
+    getCardByIdCallback: GetCardByIdCallback,
+    stackScale: number = 1.0
   ): Promise<void> {
     // Remove old stack if it exists
     const oldStack = this.discardStacks.get(stackId);
@@ -284,7 +293,7 @@ export class Board3dStackService {
       true, // Always visible
       rotation,
       undefined, // No cardTarget
-      1.0,
+      stackScale,
       undefined // No sleeve for discard
     );
 
@@ -307,7 +316,7 @@ export class Board3dStackService {
         cardBackTexture,
         new Vector3(0, 0, 0),
         rotation,
-        1.0
+        stackScale
       ).getMesh().geometry;
 
       const instancedMesh = new InstancedMesh(
@@ -328,7 +337,7 @@ export class Board3dStackService {
           position.z
         );
         // Compose matrix from position, rotation, and scale
-        matrix.compose(pos, quaternion, new Vector3(1, 1, 1));
+        matrix.compose(pos, quaternion, new Vector3(stackScale, stackScale, stackScale));
         instancedMesh.setMatrixAt(i, matrix);
       }
 

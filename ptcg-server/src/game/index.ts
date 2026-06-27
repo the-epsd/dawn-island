@@ -28,6 +28,11 @@ export * from './store/card/energy-card';
 export * from './store/card/pokemon-card';
 export * from './store/card/pokemon-types';
 export * from './store/card/trainer-card';
+export * from './store/card/op-card-types';
+export * from './store/card/op-types';
+export * from './store/card/leader-card';
+export * from './store/card/character-card';
+export * from './store/card/don-card';
 export * from './store/card/card-effect-overrides';
 export * from './store/card/any-printing-allowed';
 

@@ -1,6 +1,7 @@
 import { Format } from 'ptcg-server';
 
 export const MATCH_FORMAT_VALUES: Format[] = [
+  Format.ONE_PIECE,
   Format.STANDARD,
   Format.STANDARD_NIGHTLY,
   Format.GLC,
@@ -11,6 +12,7 @@ export const MATCH_FORMAT_VALUES: Format[] = [
 
 /** Formats shown when creating a direct / invite game (matches Angular create-game popup). */
 export const CREATE_GAME_FORMAT_VALUES: Format[] = [
+  Format.ONE_PIECE,
   Format.STANDARD,
   Format.STANDARD_NIGHTLY,
   Format.GLC,

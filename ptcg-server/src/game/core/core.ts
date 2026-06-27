@@ -128,7 +128,8 @@ export class Core {
     invited?: Client,
     deckId1?: number,
     deckId2?: number,
-    sleeveImagePath1?: string
+    sleeveImagePath1?: string,
+    leaderFullName1?: string,
   ): Game {
     if (this.clients.indexOf(client) === -1) {
       throw new GameError(GameMessage.ERROR_CLIENT_NOT_CONNECTED);
@@ -167,7 +168,7 @@ export class Core {
       gameSettings.rules.firstTurnUseSupporter = true;
     }
     const game = new Game(this, generateId(this.games), gameSettings);
-    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck, undefined, deckId1, sleeveImagePath1));
+    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck, undefined, deckId1, sleeveImagePath1, leaderFullName1));
     if (invited) {
       game.dispatch(client, new InvitePlayerAction(invited.id, invited.name));
     }
@@ -188,7 +189,9 @@ export class Core {
     deckId1?: number,
     deckId2?: number,
     sleeveImagePath1?: string,
-    sleeveImagePath2?: string
+    sleeveImagePath2?: string,
+    leaderFullName1?: string,
+    leaderFullName2?: string,
   ): Game {
     if (this.clients.indexOf(client) === -1) {
       throw new GameError(GameMessage.ERROR_CLIENT_NOT_CONNECTED);
@@ -226,10 +229,10 @@ export class Core {
     }
 
     const game = new Game(this, generateId(this.games), gameSettings);
-    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck1, undefined, deckId1, sleeveImagePath1));
+    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck1, undefined, deckId1, sleeveImagePath1, leaderFullName1));
     game.dispatch(
       client,
-      new AddPlayerAction(opponentId, `${client.name} (2)`, deck2, undefined, deckId2, sleeveImagePath2)
+      new AddPlayerAction(opponentId, `${client.name} (2)`, deck2, undefined, deckId2, sleeveImagePath2, leaderFullName2)
     );
     game.initSelfPlay(client.user.id);
 
@@ -250,7 +253,9 @@ export class Core {
     deckId1?: number,
     deckId2?: number,
     sleeveImagePath1?: string,
-    sleeveImagePath2?: string
+    sleeveImagePath2?: string,
+    leaderFullName1?: string,
+    leaderFullName2?: string,
   ): Game {
     if (this.clients.indexOf(client) === -1) {
       throw new GameError(GameMessage.ERROR_CLIENT_NOT_CONNECTED);
@@ -276,8 +281,8 @@ export class Core {
       gameSettings.rules.firstTurnUseSupporter = true;
     }
     const game = new Game(this, generateId(this.games), gameSettings);
-    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck, artworksMap1, deckId1, sleeveImagePath1));
-    game.dispatch(client, new AddPlayerAction(client2.id, client2.name, deck2, artworksMap2, deckId2, sleeveImagePath2));
+    game.dispatch(client, new AddPlayerAction(client.id, client.name, deck, artworksMap1, deckId1, sleeveImagePath1, leaderFullName1));
+    game.dispatch(client, new AddPlayerAction(client2.id, client2.name, deck2, artworksMap2, deckId2, sleeveImagePath2, leaderFullName2));
     this.games.push(game);
     this.emit(c => c.onGameAdd(game));
     this.joinGame(client, game);

@@ -67,7 +67,10 @@ export enum SuperType {
   POKEMON,
   TRAINER,
   ENERGY,
-  ANY
+  ANY,
+  LEADER,
+  CHARACTER,
+  DON,
 }
 
 export enum EnergyType {
@@ -1364,6 +1367,7 @@ export enum Format {
   SV,
   THEME,
   PRE_RELEASE,
+  ONE_PIECE,
 }
 
 export const Energy = {

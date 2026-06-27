@@ -37,7 +37,7 @@ import { Board3dAssetLoaderService } from './board-3d-asset-loader.service';
 import { Board3dStateSyncService } from './board-3d-state-sync.service';
 import { Board3dHandService } from './board-3d-hand.service';
 import { Board3dCard } from '../board-3d-card';
-import { ZONE_POSITIONS, SNAP_DISTANCE, getBenchPositions } from '../board-3d-zone-positions';
+import { ZONE_POSITIONS, SNAP_DISTANCE, getBenchPositions, OP_CHARACTER_SCALE } from '../board-3d-zone-positions';
 import {
   BOARD3D_CARD_SLOT_BASE_HEIGHT,
   BOARD3D_CARD_SLOT_BASE_WIDTH,
@@ -170,6 +170,10 @@ export class Board3dInteractionService {
 
   private playsAsBasicPokemonFromHand(card: Card | undefined | null): boolean {
     return cardPlaysAsBasicPokemonFromHand(card, this.handPlayZoneGameSettings);
+  }
+
+  private playsCharacterFromHand(card: Card | undefined | null): boolean {
+    return card?.superType === SuperType.CHARACTER;
   }
 
   /**
@@ -779,6 +783,15 @@ export class Board3dInteractionService {
         return !isOccupied;
       }
       return false;
+    }
+
+    // One Piece characters play to an open bench slot
+    if (this.playsCharacterFromHand(card)) {
+      return (
+        config.type === DropZoneType.BENCH &&
+        !isOccupied &&
+        config.player === PlayerType.BOTTOM_PLAYER
+      );
     }
 
     switch (superType) {
@@ -1474,6 +1487,14 @@ export class Board3dInteractionService {
       return null;
     }
 
+    if (this.playsCharacterFromHand(card)) {
+      const benchZone = this.findNextOpenBenchSlot(PlayerType.BOTTOM_PLAYER);
+      if (benchZone && this.isValidDropZone(benchZone)) {
+        return this.configToCardTarget(benchZone.getConfig());
+      }
+      return null;
+    }
+
     if (
       superType === SuperType.POKEMON &&
       stage !== undefined &&
@@ -1955,6 +1976,11 @@ export class Board3dInteractionService {
     let endScale = 1.0;
     if (config.type === DropZoneType.ACTIVE) {
       endScale = 1.5;
+    } else if (
+      config.type === DropZoneType.BENCH &&
+      card?.superType === SuperType.CHARACTER
+    ) {
+      endScale = OP_CHARACTER_SCALE;
     }
     const rotationY = config.player === PlayerType.TOP_PLAYER ? Math.PI : 0;
     return { world, endScale, rotationY };
@@ -2196,7 +2222,8 @@ export class Board3dInteractionService {
   async createDropZoneIndicators(
     scene: Scene,
     bottomBenchSize?: number,
-    topBenchSize?: number
+    topBenchSize?: number,
+    forceRebuild = false
   ): Promise<boolean> {
     // Use provided bench sizes or defaults
     const bottomSize = bottomBenchSize ?? this.currentBenchSizes.bottom ?? 5;
@@ -2206,7 +2233,7 @@ export class Board3dInteractionService {
       bottomSize !== this.currentBenchSizes.bottom ||
       topSize !== this.currentBenchSizes.top;
 
-    if (this.dropZones.length > 0 && !benchSizesChanged) {
+    if (this.dropZones.length > 0 && !benchSizesChanged && !forceRebuild) {
       return false;
     }
 

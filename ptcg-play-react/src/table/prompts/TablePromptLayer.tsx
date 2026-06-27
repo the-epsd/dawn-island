@@ -39,7 +39,7 @@ import { PutDamageOverlay } from './PutDamageOverlay';
 import { RemoveDamageOverlay } from './RemoveDamageOverlay';
 import { MoveDamageOverlay } from './MoveDamageOverlay';
 import { scanBlockedOwnZeroDamageFromState } from './pokemonPromptRows';
-import { BOARD3D_ATTACK_ANIMATION_DURATION_SEC, BOARD3D_ABILITY_ANIMATION_DURATION_SEC } from '../board3d/services/board-3d-animation.service';
+import { BOARD3D_ATTACK_ANIMATION_DURATION_SEC, BOARD3D_ABILITY_ANIMATION_DURATION_SEC, SETUP_MULLIGAN_PROMPT_DELAY_MS, SETUP_OPENING_HAND_DRAW_FALLBACK_MS } from '../board3d/services/board-3d-animation.service';
 import {
   autoTakeChoosePrizeIndices,
   shouldAutoTakeChoosePrize,
@@ -212,6 +212,85 @@ function AbilityAnimationWaitPrompt(props: {
   }, [promptId, boardInteraction, resolve]);
 
   return null;
+}
+
+function MulliganConfirmPrompt(props: {
+  prompt: ConfirmPrompt;
+  boardInteraction: BoardInteractionService;
+  t: TFunction;
+  gameMessageText: (t: TFunction, message: string | number) => string;
+  resolve: (id: number, result: unknown) => void | Promise<void>;
+}) {
+  const { prompt: cp, boardInteraction, t, gameMessageText, resolve } = props;
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+
+    void (async () => {
+      const pollUntil = Date.now() + 1500;
+      let drawPromise: Promise<void> | null = null;
+      while (Date.now() < pollUntil && !cancelled) {
+        drawPromise = boardInteraction.getPendingHandDrawAnimationPromise();
+        if (drawPromise) {
+          break;
+        }
+        await sleep(16);
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      if (drawPromise) {
+        await drawPromise;
+        if (cancelled) {
+          return;
+        }
+        await sleep(SETUP_MULLIGAN_PROMPT_DELAY_MS);
+      } else {
+        const drawCompletedAt = boardInteraction.getSetupOpeningHandDrawCompletedAt();
+        const revealEndsAt = drawCompletedAt + SETUP_MULLIGAN_PROMPT_DELAY_MS;
+        if (drawCompletedAt > 0 && Date.now() < revealEndsAt) {
+          await sleep(revealEndsAt - Date.now());
+        } else if (drawCompletedAt === 0) {
+          await sleep(SETUP_OPENING_HAND_DRAW_FALLBACK_MS + SETUP_MULLIGAN_PROMPT_DELAY_MS);
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      setVisible(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cp.id, boardInteraction]);
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <div className={styles.backdrop} role="presentation">
+      <div className={styles.panel} role="dialog" aria-modal="true">
+        <h2 className={styles.title}>{t('PROMPT_CONFIRM_TITLE', { defaultValue: 'Confirm' })}</h2>
+        <p className={styles.message}>{gameMessageText(t, cp.message)}</p>
+        <div className={styles.actions}>
+          <ShellButton variant="secondary" type="button" onClick={() => resolve(cp.id, false)}>
+            {t('GAME_MESSAGES.NO', { defaultValue: 'No' })}
+          </ShellButton>
+          <ShellButton type="button" onClick={() => resolve(cp.id, true)}>
+            {t('GAME_MESSAGES.YES', { defaultValue: 'Yes' })}
+          </ShellButton>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function useLocalGameRef(localGame: LocalGameState) {
@@ -576,6 +655,19 @@ export function TablePromptLayer({
 
   if (p.type === 'Confirm') {
     const cp = p as ConfirmPrompt;
+    const isMulligan = cp.message === 'MULLIGAN';
+    if (isMulligan) {
+      return (
+        <MulliganConfirmPrompt
+          key={cp.id}
+          prompt={cp}
+          boardInteraction={boardInteraction}
+          t={t}
+          gameMessageText={gameMessageText}
+          resolve={resolve}
+        />
+      );
+    }
     return (
       <div className={styles.backdrop} role="presentation">
         <div className={styles.panel} role="dialog" aria-modal="true">

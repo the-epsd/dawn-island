@@ -23,9 +23,7 @@ const TIME_LIMIT_OPTIONS: { value: number; labelKey: string }[] = [
 ];
 
 function decksForFormat(all: DeckListEntry[], format: Format): DeckListEntry[] {
-  return all.filter(
-    (d) => Array.isArray(d.format) && d.format.includes(format) && FormatValidator.isDeckValidForFormat(d, format),
-  );
+  return all.filter((d) => FormatValidator.isDeckValidForFormat(d, format));
 }
 
 export type CreateGameInviteDialogProps = {
@@ -44,7 +42,7 @@ export function CreateGameInviteDialog({ open, onClose, invitedClientId }: Creat
   const isAdmin = user?.roleId === 4;
 
   const [allDecks, setAllDecks] = useState<DeckListEntry[]>([]);
-  const [format, setFormat] = useState<Format>(Format.STANDARD);
+  const [format, setFormat] = useState<Format>(Format.ONE_PIECE);
   const [deckId, setDeckId] = useState<number | null>(null);
   const [timeLimit, setTimeLimit] = useState(1200);
   const [recordingEnabled, setRecordingEnabled] = useState(true);
@@ -156,7 +154,7 @@ export function CreateGameInviteDialog({ open, onClose, invitedClientId }: Creat
         return;
       }
       const gs = new GameSettings();
-      gs.format = format;
+      gs.format = Format.ONE_PIECE;
       gs.timeLimit = timeLimit;
       gs.recordingEnabled = recordingEnabled;
       gs.sandboxMode = isAdmin ? sandboxMode : false;
@@ -172,6 +170,7 @@ export function CreateGameInviteDialog({ open, onClose, invitedClientId }: Creat
         invitedClientId,
         deckId,
         deckRes.deck.sleeveImagePath,
+        deckRes.deck.manualArchetype1,
       );
       showSnackbar(t('REACT_INVITE_GAME_STARTED'));
       onClose();

@@ -33,7 +33,7 @@ export interface DeckEditToolbarFilter {
 
 export function defaultToolbarFilter(): DeckEditToolbarFilter {
   return {
-    selectedSet: null,
+    selectedSet: 'OP01',
     showLibraryCardTypeBadge: false,
     formats: [],
     superTypes: [],

@@ -10,6 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Format } from 'ptcg-server';
+import { FormatValidator } from '../deck-editor/formatValidator';
 import { formatOptionLabel } from '../deck-editor/formatLabelI18n';
 import { useCoreSession } from '../context/CoreSessionContext';
 import { useSettings } from '../context/SettingsContext';
@@ -24,7 +25,7 @@ import { MATCH_FORMAT_VALUES } from './matchFormats';
 import styles from './MatchmakingLobby.module.css';
 
 function decksForFormat(all: DeckListEntry[], format: Format): DeckListEntry[] {
-  return all.filter((d) => Array.isArray(d.format) && d.format.includes(format));
+  return all.filter((d) => FormatValidator.isDeckValidForFormat(d, format));
 }
 
 function computeDefaultSelections(
@@ -235,7 +236,15 @@ export function MatchmakingLobby({ onError }: MatchmakingLobbyProps) {
       const cards =
         deck.cards && deck.cards.length > 0 ? deck.cards : (await getDeck(deck.id)).deck.cards;
       const sandboxMode = user?.roleId === 4 && defaultSandboxMode ? true : undefined;
-      await joinMatchmaking(selectedFormat, cards, deck.artworks, deck.id, deck.sleeveImagePath, sandboxMode);
+      await joinMatchmaking(
+        selectedFormat,
+        cards,
+        deck.artworks,
+        deck.id,
+        deck.sleeveImagePath,
+        sandboxMode,
+        deck.manualArchetype1,
+      );
       setInQueue(true);
     } catch (e) {
       onErrorRef.current(e instanceof ApiError ? e.message : t('REACT_ERROR_JOIN_QUEUE'));

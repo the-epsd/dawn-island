@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next';
 import { Format } from 'ptcg-server';
 
 const FORMAT_LABEL_KEYS: Partial<Record<Format, string>> = {
+  [Format.ONE_PIECE]: 'LABEL_ONE_PIECE',
   [Format.STANDARD]: 'LABEL_STANDARD',
   [Format.STANDARD_NIGHTLY]: 'LABEL_STANDARD_NIGHTLY',
   [Format.GLC]: 'LABEL_GLC',

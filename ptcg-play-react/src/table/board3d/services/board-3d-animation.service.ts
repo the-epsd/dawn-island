@@ -27,6 +27,15 @@ export const BOARD3D_ATTACK_ANIMATION_DURATION_SEC = 1.35;
 /** Total duration (seconds) of {@link Board3dAnimationService.playAbilityActivationAnimation}. */
 export const BOARD3D_ABILITY_ANIMATION_DURATION_SEC = 0.9;
 
+/** Pause after setup opening-hand draw animation before showing the mulligan confirm prompt. */
+export const SETUP_MULLIGAN_PROMPT_DELAY_MS = 2000;
+
+/**
+ * Fallback when the 3D board has not registered a setup hand-draw promise (reconnect, no 3D board).
+ * Matches a 5-card {@link DrawFlightVisualPreset.setupMulligan} batch.
+ */
+export const SETUP_OPENING_HAND_DRAW_FALLBACK_MS = 2400;
+
 /** Card mesh width in world units at scale 1 (match board-3d-config / hand service). */
 const HAND_CARD_MESH_WIDTH_WORLD = 2.75;
 /** Center-to-center spacing as a multiple of card width (no overlap, small gap). */
@@ -496,11 +505,13 @@ export class Board3dAnimationService {
     const qFlipScratch = new Quaternion();
 
     return new Promise(resolve => {
+      const finish = () => {
+        this.removeAnimation(timeline);
+        resolve();
+      };
       const timeline = gsap.timeline({
-        onComplete: () => {
-          this.removeAnimation(timeline);
-          resolve();
-        }
+        onComplete: finish,
+        onInterrupt: finish,
       });
 
       const flipOnce = { t: 0 };
@@ -574,12 +585,14 @@ export class Board3dAnimationService {
     const delay = options?.delay ?? 0;
 
     return new Promise(resolve => {
+      const finish = () => {
+        this.removeAnimation(timeline);
+        resolve();
+      };
       const timeline = gsap.timeline({
         delay,
-        onComplete: () => {
-          this.removeAnimation(timeline);
-          resolve();
-        }
+        onComplete: finish,
+        onInterrupt: finish,
       });
 
       timeline
