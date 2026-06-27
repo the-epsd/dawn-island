@@ -8,6 +8,7 @@ export interface Board3dGameActions {
   ability(gameId: number, ability: string, target: CardTarget): Promise<void>;
   stadium(gameId: number): Promise<void>;
   attack(gameId: number, attack: string): Promise<void>;
+  opBattle(gameId: number, attacker: CardTarget, defender: CardTarget): Promise<void>;
   retreatStart(gameId: number): Promise<void>;
   resolvePrompt(gameId: number, promptId: number, result: unknown): Promise<void>;
 }

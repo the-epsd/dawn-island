@@ -145,6 +145,8 @@ export function TablePage() {
         wrap(socket.emit('game:action:ability', { gameId, ability, target })),
       stadium: (gameId) => wrap(socket.emit('game:action:stadium', { gameId })),
       attack: (gameId, attack) => wrap(socket.emit('game:action:attack', { gameId, attack })),
+      opBattle: (gameId, attacker, defender) =>
+        wrap(socket.emit('game:action:opBattle', { gameId, attacker, defender })),
       retreatStart: (gameId) => wrap(socket.emit('game:action:retreatStart', { gameId })),
       resolvePrompt: (gameId, promptId, result) =>
         wrap(socket.emit('game:action:resolvePrompt', { gameId, id: promptId, result })),
@@ -160,6 +162,7 @@ export function TablePage() {
       ability: async () => { },
       stadium: async () => { },
       attack: async () => { },
+      opBattle: async () => { },
       retreatStart: async () => { },
       resolvePrompt: async () => { },
     }),

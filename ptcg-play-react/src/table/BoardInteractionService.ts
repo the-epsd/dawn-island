@@ -19,7 +19,12 @@ type SelectionOverlayKind =
   | 'move-damage'
   | 'put-damage'
   | 'hand-play-target'
+  | 'op-battle'
   | null;
+
+function cardTargetsEqual(a: CardTarget, b: CardTarget): boolean {
+  return a.player === b.player && a.slot === b.slot && a.index === b.index;
+}
 
 export interface BasicEntranceAnimationEvent {
   playerId: number;
@@ -103,6 +108,12 @@ export class BoardInteractionService {
 
   /** Explicit eligible targets when playing attach/evolution cards from hand. */
   private handPlayEligibleTargets: CardTarget[] = [];
+
+  /** Selected attacker during One Piece battle (board-relative CardTarget). */
+  private opBattleAttackerTarget: CardTarget | null = null;
+
+  /** Rested opponent leaders/characters that can be attacked. */
+  private opBattleEligibleTargets: CardTarget[] = [];
 
   /** Client pixel position for Remove damage floating +/- HUD (updated by Board3dController each frame). */
   private removeDamageHudAnchor: { x: number; y: number } | null = null;
@@ -210,6 +221,50 @@ export class BoardInteractionService {
 
   public cancelHandPlayTargetSelection(): void {
     if (this.overlayKind !== 'hand-play-target') {
+      return;
+    }
+    if (this.selectionCallback) {
+      this.selectionCallback(null);
+    }
+    this.endBoardSelection();
+  }
+
+  /**
+   * Step 1: highlight the chosen attacker (green). Step 2: highlight valid rested targets (white).
+   */
+  public startOpBattleSelection(
+    attackerTarget: CardTarget,
+    defenderTargets: CardTarget[],
+    onComplete: (defender: CardTarget | null) => void,
+  ): void {
+    if (this.isReplayModeActive) {
+      return;
+    }
+
+    this.endBoardSelection();
+
+    this.overlayKind = 'op-battle';
+    this.opBattleAttackerTarget = attackerTarget;
+    this.opBattleEligibleTargets = [...defenderTargets];
+    this.promptSubject.next(null);
+    this.selectionModeSubject.next(true);
+    this.selectedTargetsSubject.next([attackerTarget]);
+    this.blockedTargetsSubject.next([]);
+    this.eligiblePlayerTypeSubject.next(PlayerType.ANY);
+    this.eligibleSlotsSubject.next([SlotType.ACTIVE, SlotType.BENCH]);
+    this.minSelectionsSubject.next(1);
+    this.maxSelectionsSubject.next(1);
+    this.selectionCallback = (targets) => {
+      onComplete(targets?.[0] ?? null);
+    };
+  }
+
+  public isOpBattleSelectionActive(): boolean {
+    return this.overlayKind === 'op-battle';
+  }
+
+  public cancelOpBattleSelection(): void {
+    if (this.overlayKind !== 'op-battle') {
       return;
     }
     if (this.selectionCallback) {
@@ -395,6 +450,8 @@ export class BoardInteractionService {
     this.removeDamageHudAnchor = null;
     this.overlayKind = null;
     this.handPlayEligibleTargets = [];
+    this.opBattleAttackerTarget = null;
+    this.opBattleEligibleTargets = [];
     this.clearPutDamagePlacementPreview();
     this.selectionModeSubject.next(false);
     this.promptSubject.next(null);
@@ -426,6 +483,25 @@ export class BoardInteractionService {
       }
       this.selectionCallback([target]);
       this.endBoardSelection();
+      return;
+    }
+
+    if (this.overlayKind === 'op-battle') {
+      if (!this.selectionCallback) {
+        return;
+      }
+      if (
+        this.opBattleAttackerTarget !== null
+        && cardTargetsEqual(target, this.opBattleAttackerTarget)
+      ) {
+        this.selectionCallback(null);
+        this.endBoardSelection();
+        return;
+      }
+      if (this.opBattleEligibleTargets.some((t) => cardTargetsEqual(t, target))) {
+        this.selectionCallback([target]);
+        this.endBoardSelection();
+      }
       return;
     }
 
@@ -464,6 +540,10 @@ export class BoardInteractionService {
       return this.handPlayEligibleTargets.some(
         (t) => t.player === target.player && t.slot === target.slot && t.index === target.index,
       );
+    }
+
+    if (this.overlayKind === 'op-battle') {
+      return this.opBattleEligibleTargets.some((t) => cardTargetsEqual(t, target));
     }
 
     const eligiblePlayerType = this.eligiblePlayerTypeSubject.value;

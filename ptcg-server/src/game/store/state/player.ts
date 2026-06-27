@@ -37,6 +37,9 @@ export class Player {
 
   leader: CardList = new CardList();
 
+  /** One Piece: leader is rested (tapped) and cannot attack until stood up. */
+  leaderRested: boolean = false;
+
   /** One Piece: 10-card DON!! deck (separate from main deck). */
   donDeck: CardList = new CardList();
 

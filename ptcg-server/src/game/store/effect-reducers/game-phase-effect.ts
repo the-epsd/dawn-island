@@ -12,6 +12,7 @@ import { PlayerType } from '../actions/play-card-action';
 import { MarkerConstants } from '../markers/marker-constants';
 import { StateUtils } from '../state-utils';
 import { addDonFromDeckToArea, getDonRefreshCountForTurn } from '../reducers/op-don-utils';
+import { standUpOpPlayer } from '../reducers/op-battle-utils';
 
 function getActivePlayer(state: State): Player {
   return state.players[state.activePlayer];
@@ -66,6 +67,7 @@ export function initNextTurn(store: StoreLike, state: State): State {
   const isOnePiece = state.gameSettings?.format === Format.ONE_PIECE;
   if (isOnePiece) {
     addDonFromDeckToArea(player, getDonRefreshCountForTurn(state.turn));
+    standUpOpPlayer(player);
   }
 
   // Skip draw card on first turn

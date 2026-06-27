@@ -84,3 +84,15 @@ export class PassTurnAction implements Action {
   constructor(public clientId: number) { }
 
 }
+
+export class OpBattleAction implements Action {
+
+  readonly type: string = 'OP_BATTLE_ACTION';
+
+  constructor(
+    public clientId: number,
+    public attacker: CardTarget,
+    public defender: CardTarget,
+  ) { }
+
+}

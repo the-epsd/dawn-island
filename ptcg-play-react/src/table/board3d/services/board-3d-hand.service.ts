@@ -350,6 +350,8 @@ export class Board3dHandService {
     cardGroup.userData.handIndex = index;
     cardGroup.userData.cardData = card;
 
+    cardMesh.setDimmed(false);
+
     // Add green outline for playable cards (matches 2D board's green-400 color)
     if (isPlayable) {
       cardMesh.setOutline(true, 0x4ade80);

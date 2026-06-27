@@ -72,3 +72,5 @@ export * from './store/state-utils';
 export * from './store/store-handler';
 export * from './store/store-like';
 export * from './store/store';
+
+export * from './store/reducers/op-battle-utils';

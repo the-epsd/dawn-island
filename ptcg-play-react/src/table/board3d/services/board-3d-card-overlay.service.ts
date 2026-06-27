@@ -13,6 +13,7 @@ import { Board3dDamageCounter } from '../board-3d-damage-counter';
 import { Board3dPendingPlaceDamage } from '../board-3d-pending-place-damage';
 import { Board3dMarker, collectPokemonMarkerFiles } from '../board-3d-marker';
 import { Board3dAbilityUsedBadge } from '../board-3d-ability-used-badge';
+import { Board3dOpStatOverlays } from '../board-3d-op-stat-overlays';
 import type { Board3dCardsAdapter } from '../board3dCardsAdapter';
 import { apply3dCardHolo } from '../board-3d-holo-apply';
 import {
@@ -36,6 +37,7 @@ export interface CardOverlays {
   pendingPlaceDamage: Board3dPendingPlaceDamage;
   marker: Board3dMarker;
   abilityUsedBadge: Board3dAbilityUsedBadge;
+  opStatOverlays: Board3dOpStatOverlays;
   breakCard?: Board3dCard;
   toolCards: Board3dCard[];
 }
@@ -59,6 +61,7 @@ export class Board3dCardOverlayService {
     isFaceDown: boolean,
     scene: Scene,
     pendingPlaceDamage: number = 0,
+    mainCard?: Card,
   ): Promise<void> {
     const root = overlayAttachRoot(cardHost);
     const overlayRoot = cardOverlayAttachRoot(cardHost);
@@ -70,6 +73,7 @@ export class Board3dCardOverlayService {
         pendingPlaceDamage: new Board3dPendingPlaceDamage(),
         marker: new Board3dMarker(this.assetLoader),
         abilityUsedBadge: new Board3dAbilityUsedBadge(),
+        opStatOverlays: new Board3dOpStatOverlays(),
         toolCards: [],
       };
       this.cardOverlays.set(cardId, overlays);
@@ -78,10 +82,12 @@ export class Board3dCardOverlayService {
       root.add(overlays.pendingPlaceDamage.getGroup());
       overlays.marker.attachTo(overlayRoot);
       root.add(overlays.abilityUsedBadge.getGroup());
+      overlays.opStatOverlays.attachTo(overlayRoot);
     } else {
       overlays.energySprite.attachTo(overlayRoot);
       overlays.damageCounter.attachTo(overlayRoot);
       overlays.marker.attachTo(overlayRoot);
+      overlays.opStatOverlays.attachTo(overlayRoot);
     }
 
     if (cardHost instanceof Board3dCard) {
@@ -103,6 +109,9 @@ export class Board3dCardOverlayService {
 
     const hasAbilityUsed = cardList.boardEffect.includes(BoardEffect.ABILITY_USED);
     overlays.abilityUsedBadge.updateAbilityUsed(hasAbilityUsed);
+
+    const boardCard = mainCard ?? cardList.getPokemonCard() ?? cardList.cards[0];
+    overlays.opStatOverlays.update(boardCard, !isFaceDown);
 
     await this.updateBreakOverlay(cardId, overlays, root, breakCard, isFaceDown, scene, cardList);
     await this.updateToolOverlay(cardId, overlays, cardList.tools, root, scene, cardList);
@@ -190,6 +199,7 @@ export class Board3dCardOverlayService {
       overlays.energySprite.updateBillboards(camera);
       overlays.damageCounter.updateBillboards(camera);
       overlays.marker.updateBillboards(camera);
+      overlays.opStatOverlays.updateBillboards(camera);
     });
   }
 
@@ -373,6 +383,7 @@ export class Board3dCardOverlayService {
       overlays.pendingPlaceDamage.dispose();
       overlays.marker.dispose();
       overlays.abilityUsedBadge.dispose();
+      overlays.opStatOverlays.dispose();
       if (overlays.breakCard) {
         overlays.breakCard.dispose();
       }

@@ -353,8 +353,15 @@ export function checkWinner(store: StoreLike, state: State, onComplete?: () => v
 
     if (player.prizes.every(p => p.cards.length === 0)) {
       store.log(state, GameLog.LOG_PLAYER_NO_PRIZE_CARD, { name: player.name });
-      points[i]++;
-      reasons[i].push('no_prizes');
+      if (state.gameSettings?.format === Format.ONE_PIECE) {
+        // One Piece life: no cards left in the life area — this player loses.
+        const opponentIndex = i === 0 ? 1 : 0;
+        points[opponentIndex]++;
+        reasons[opponentIndex].push('op_no_life');
+      } else {
+        points[i]++;
+        reasons[i].push('no_prizes');
+      }
     }
   }
 

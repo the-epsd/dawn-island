@@ -25,7 +25,14 @@ export const Board3dCardMesh = forwardRef<Group, Board3dCardMeshProps>(function 
     <primitive
       object={g}
       dispose={null}
-      onPointerDown={(e: ThreeEvent<PointerEvent>) => ctrlRef.current?.handleR3fMeshPointerDown(e)}
+      onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        ctrlRef.current?.handleR3fMeshPointerDown(e);
+      }}
+      onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        ctrlRef.current?.handleR3fMeshPointerUp(e);
+      }}
     />
   );
 });

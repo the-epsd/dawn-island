@@ -17,6 +17,8 @@ export class PokemonCardList extends CardList {
   public confusionDamage: number = 30;
   public marker = new Marker();
   public pokemonPlayedTurn: number = 0;
+  /** One Piece: character is rested (tapped) and cannot attack until stood up. */
+  public opRested: boolean = false;
   public sleepFlips = 1;
   public boardEffect: BoardEffect[] = [];
   public hpBonus: number = 0;

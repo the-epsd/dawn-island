@@ -11,6 +11,23 @@ export const OVERLAY_FACE_Z = 0.15;
 /** Center X on the card right edge — disc hangs outward like Angular translate(50%). */
 export const OVERLAY_RIGHT_X = CARD_HALF_WIDTH;
 
+/** Center X on the card left edge — mirrors {@link OVERLAY_RIGHT_X}. */
+export const OVERLAY_LEFT_X = -CARD_HALF_WIDTH;
+
+/** Shared depth for OP stat overlays (cost + attack). */
+export const OP_STAT_OVERLAY_FACE_Z = OVERLAY_FACE_Z + 0.01;
+
+/** One Piece cost disc — inset from top-left corner. */
+export const OP_COST_BADGE_SIZE = 0.9;
+export const OP_COST_BADGE_X = OVERLAY_LEFT_X + 0.18;
+export const OP_COST_BADGE_Y = CARD_HALF_HEIGHT - 0.22;
+
+/** One Piece attack pill — inset from top-right corner. */
+export const OP_ATTACK_BADGE_WIDTH = 1.58;
+export const OP_ATTACK_BADGE_HEIGHT = 0.9;
+export const OP_ATTACK_BADGE_X = OVERLAY_RIGHT_X - 0.18;
+export const OP_ATTACK_BADGE_Y = CARD_HALF_HEIGHT - 0.22;
+
 /** Damage counter rest pose (top-right corner). */
 export const DAMAGE_COUNTER_SIZE = 0.96;
 export const DAMAGE_COUNTER_HALF_SIZE = DAMAGE_COUNTER_SIZE / 2;

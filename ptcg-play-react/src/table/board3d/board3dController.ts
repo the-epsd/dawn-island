@@ -46,7 +46,15 @@ import {
   PokemonCardList,
   type CardTarget,
   type State,
+  isOnePieceFormat,
+  canOpAttackerStrike,
+  listOpBattleDefenderTargets,
+  boardTargetToActingPlayerTarget,
+  serverTargetToBoardTarget,
 } from 'ptcg-server';
+import {
+  getClientBoardPlayerType,
+} from './op-battle-board';
 import type { Board3dCardsAdapter } from './board3dCardsAdapter';
 import {
   BOARD3D_CARD_SLOT_BASE_HEIGHT,
@@ -155,6 +163,7 @@ export class Board3dController {
 
   /** When R3F mesh `onPointerDown` handles the same DOM event, skip duplicate canvas listener. */
   private r3fMeshPointerDownTs = -1;
+  private r3fMeshPointerUpTs = -1;
 
   // Player perspective - true when viewing from opposite side (like 2D board's isUpsideDown)
   private isUpsideDown: boolean = false;
@@ -247,6 +256,15 @@ export class Board3dController {
       canvas.style.cursor = 'grabbing';
       this.markDirty();
     }
+  }
+
+  /** Complete board-card click on the same mesh that received pointer down (R3F). */
+  handleR3fMeshPointerUp(ev: ThreeEvent<PointerEvent>): void {
+    if (!this.r3fMode) {
+      return;
+    }
+    this.r3fMeshPointerUpTs = ev.nativeEvent.timeStamp;
+    this.processMouseUp(r3fPointerEventAsMouse(ev));
   }
 
   setProps(p: Board3dControllerProps): void {
@@ -2326,7 +2344,68 @@ export class Board3dController {
   };
 
   private onPointerUp = (event: PointerEvent): void => {
-    this.onMouseUp(event as unknown as MouseEvent);
+    if (this.r3fMode && event.timeStamp === this.r3fMeshPointerUpTs) {
+      return;
+    }
+    this.processMouseUp(event as unknown as MouseEvent);
+  };
+
+  private processMouseUp(event: MouseEvent): void {
+    const canvas = this.canvasEl;
+    const isHandPlayTargetSelection = this.boardInteractionService.isHandPlayTargetSelectionActive();
+    const result = this.interactionService.onMouseUp(
+      event,
+      this.camera,
+      this.scene,
+      canvas,
+      this.boardInteractionService.isSelectionActive(),
+      isHandPlayTargetSelection,
+    );
+
+    if (result?.action === 'cancelHandPlayTarget') {
+      this.boardInteractionService.cancelHandPlayTargetSelection();
+      this.updateSelectionVisuals();
+      canvas.style.cursor = 'default';
+      this.markDirty();
+      return;
+    }
+
+    if (
+      result &&
+      (result.action === 'playCard' ||
+        result.action === 'pickAttachTarget' ||
+        (result.action === 'click' && result.clickedCard?.userData.isHandCard))
+    ) {
+      if (isHandPlayTargetSelection) {
+        this.boardInteractionService.clearHandPlayTargetSelectionSilently();
+        this.updateSelectionVisuals();
+      }
+    }
+
+    if (result) {
+      if (result.action === 'click' && result.clickedCard) {
+        this.onCardClicked(result.clickedCard);
+      } else if (result.action === 'pickAttachTarget' && result.handIndex !== undefined && result.eligibleTargets) {
+        this.boardInteractionService.startHandPlayTargetSelection(result.eligibleTargets, (target) => {
+          this.updateSelectionVisuals();
+          if (target && result.handIndex !== undefined) {
+            this.executeHandAttachPlay(result.handIndex, target);
+          }
+        });
+        this.updateSelectionVisuals();
+      } else if (result.action === 'playCard' && result.handIndex !== undefined && result.zone) {
+        this.executeHandPlayCard(result);
+      } else if (result.action === 'retreat' && result.benchIndex !== undefined) {
+        void this.gameActions.retreatAction(this.gameState.gameId, result.benchIndex);
+      }
+    }
+
+    canvas.style.cursor = 'default';
+    this.markDirty();
+  }
+
+  private onMouseUp = (event: MouseEvent): void => {
+    this.processMouseUp(event);
   };
 
   private onPointerCancel = (): void => {
@@ -2380,60 +2459,6 @@ export class Board3dController {
       }
     }
 
-    this.markDirty();
-  };
-
-  private onMouseUp = (event: MouseEvent): void => {
-    const canvas = this.canvasEl;
-    const isHandPlayTargetSelection = this.boardInteractionService.isHandPlayTargetSelectionActive();
-    const result = this.interactionService.onMouseUp(
-      event,
-      this.camera,
-      this.scene,
-      canvas,
-      this.boardInteractionService.isSelectionActive(),
-      isHandPlayTargetSelection,
-    );
-
-    if (result?.action === 'cancelHandPlayTarget') {
-      this.boardInteractionService.cancelHandPlayTargetSelection();
-      this.updateSelectionVisuals();
-      canvas.style.cursor = 'default';
-      this.markDirty();
-      return;
-    }
-
-    if (
-      result &&
-      (result.action === 'playCard' ||
-        result.action === 'pickAttachTarget' ||
-        (result.action === 'click' && result.clickedCard?.userData.isHandCard))
-    ) {
-      if (isHandPlayTargetSelection) {
-        this.boardInteractionService.clearHandPlayTargetSelectionSilently();
-        this.updateSelectionVisuals();
-      }
-    }
-
-    if (result) {
-      if (result.action === 'click' && result.clickedCard) {
-        this.onCardClicked(result.clickedCard);
-      } else if (result.action === 'pickAttachTarget' && result.handIndex !== undefined && result.eligibleTargets) {
-        this.boardInteractionService.startHandPlayTargetSelection(result.eligibleTargets, (target) => {
-          this.updateSelectionVisuals();
-          if (target && result.handIndex !== undefined) {
-            this.executeHandAttachPlay(result.handIndex, target);
-          }
-        });
-        this.updateSelectionVisuals();
-      } else if (result.action === 'playCard' && result.handIndex !== undefined && result.zone) {
-        this.executeHandPlayCard(result);
-      } else if (result.action === 'retreat' && result.benchIndex !== undefined) {
-        void this.gameActions.retreatAction(this.gameState.gameId, result.benchIndex);
-      }
-    }
-
-    canvas.style.cursor = 'default';
     this.markDirty();
   };
 
@@ -2792,8 +2817,16 @@ export class Board3dController {
   private onCardClicked(cardObject: Object3D): void {
     const cardData = cardObject.userData.cardData as Card;
     const cardList = cardObject.userData.cardList;
-    const cardTarget = cardObject.userData.cardTarget as CardTarget;
+    const cardTarget =
+      (cardObject.userData.cardTarget as CardTarget | undefined)
+      ?? this.resolveBoardPokemonCardTargetFromObject(cardObject)
+      ?? undefined;
     const isHandCard = cardObject.userData.isHandCard;
+
+    if (this.handleOnePieceBattleClick(cardObject, cardTarget, isHandCard)) {
+      return;
+    }
+
     const isDiscard = cardObject.userData.isDiscard;
     const isLostZone = cardObject.userData.isLostZone;
     const isDeck = cardObject.userData.isDeck;
@@ -3030,11 +3063,16 @@ export class Board3dController {
       // Hand cards: enable abilities with useFromHand (like Luxray's Swelling Flash)
       options = { enableAbility: { useFromHand: true }, enableAttack: false };
     } else if (cardTarget) {
+      const isOnePiece = isOnePieceFormat(this.gameState?.state);
       if (cardTarget.slot === SlotType.ACTIVE) {
         // Active Pokemon: enable abilities (useWhenInPlay), attacks, and retreat (if not already retreated this turn)
         canRetreat = !!(this.bottomPlayer && this.gameState?.state &&
           this.bottomPlayer.retreatedTurn !== this.gameState.state.turn);
-        options = { enableAbility: { useWhenInPlay: true }, enableAttack: true, enableRetreat: canRetreat };
+        options = {
+          enableAbility: { useWhenInPlay: true },
+          enableAttack: !isOnePiece,
+          enableRetreat: canRetreat,
+        };
       } else if (cardTarget.slot === SlotType.BENCH) {
         // Bench Pokemon: enable abilities (useWhenInPlay), no attacks
         options = { enableAbility: { useWhenInPlay: true }, enableAttack: false };
@@ -3073,5 +3111,116 @@ export class Board3dController {
         this.gameActions.retreatStart(gameId);
       }
     });
+  }
+
+  private isOpGame(): boolean {
+    const state = this.gameState?.state;
+    if (!state) {
+      return false;
+    }
+    if (isOnePieceFormat(state)) {
+      return true;
+    }
+    return !!(
+      (this.bottomPlayer?.leader?.cards?.length ?? 0) > 0
+      || (this.topPlayer?.leader?.cards?.length ?? 0) > 0
+    );
+  }
+
+  private getClientBoardPlayerType(): PlayerType {
+    return getClientBoardPlayerType(this.clientId, this.bottomPlayer, this.topPlayer);
+  }
+
+  /**
+   * One Piece battle clicks — step 1: pick attacker, step 2: pick target.
+   * Returns true when the click was consumed (no card info pane).
+   */
+  private handleOnePieceBattleClick(
+    cardObject: Object3D,
+    cardTarget: CardTarget | undefined,
+    isHandCard: boolean,
+  ): boolean {
+    if (isHandCard || !this.isOpGame()) {
+      return false;
+    }
+
+    const target =
+      cardTarget ?? this.resolveBoardPokemonCardTargetFromObject(cardObject) ?? undefined;
+    if (!target) {
+      return this.boardInteractionService.isOpBattleSelectionActive();
+    }
+
+    if (this.boardInteractionService.isOpBattleSelectionActive()) {
+      if (
+        this.boardInteractionService.isTargetEligible(target)
+        || this.boardInteractionService.isTargetSelected(target)
+      ) {
+        this.boardInteractionService.toggleTarget(target);
+      }
+      return true;
+    }
+
+    const clientBoard = this.getClientBoardPlayerType();
+    const state = this.gameState?.state;
+    const isYourTurn =
+      state?.phase === GamePhase.PLAYER_TURN
+      && state.players[state.activePlayer]?.id === this.clientId;
+
+    if (
+      isYourTurn
+      && target.player === clientBoard
+      && (target.slot === SlotType.ACTIVE || target.slot === SlotType.BENCH)
+      && !this.boardInteractionService.isSelectionActive()
+    ) {
+      if (this.trySelectOpBattleAttacker(target)) {
+        return true;
+      }
+      // Own fighter but can't attack this turn — don't open card info.
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * One Piece battle: click a ready attacker, then click a highlighted opponent target.
+   */
+  private trySelectOpBattleAttacker(attackerTarget: CardTarget): boolean {
+    const state = this.gameState?.state;
+    if (!state || state.phase !== GamePhase.PLAYER_TURN) {
+      return false;
+    }
+    if (this.gameState.deleted) {
+      return false;
+    }
+
+    const activePlayer = state.players[state.activePlayer];
+    if (!activePlayer || activePlayer.id !== this.clientId) {
+      return false;
+    }
+
+    const clientBoard = this.getClientBoardPlayerType();
+    const serverAttacker = boardTargetToActingPlayerTarget(attackerTarget, clientBoard);
+    if (!canOpAttackerStrike(state, activePlayer, serverAttacker)) {
+      return false;
+    }
+
+    const serverDefenders = listOpBattleDefenderTargets(state, activePlayer);
+    const boardDefenders = serverDefenders.map((d) =>
+      serverTargetToBoardTarget(d, clientBoard),
+    );
+    if (boardDefenders.length === 0) {
+      return true;
+    }
+
+    this.boardInteractionService.startOpBattleSelection(attackerTarget, boardDefenders, (defenderBoard) => {
+      if (!defenderBoard) {
+        return;
+      }
+      const serverDefender = boardTargetToActingPlayerTarget(defenderBoard, clientBoard);
+      void this.gameActions.opBattle(this.gameState.gameId, serverAttacker, serverDefender);
+    });
+    this.updateSelectionVisuals();
+    return true;
   }
 }

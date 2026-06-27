@@ -78,6 +78,7 @@ function useStableGameActions(actions: Board3dGameActions): Board3dGameActions {
       ability: (...a) => ref.current.ability(...a),
       stadium: (...a) => ref.current.stadium(...a),
       attack: (...a) => ref.current.attack(...a),
+      opBattle: (...a) => ref.current.opBattle(...a),
       retreatStart: (...a) => ref.current.retreatStart(...a),
       resolvePrompt: (...a) => ref.current.resolvePrompt(...a),
     }),

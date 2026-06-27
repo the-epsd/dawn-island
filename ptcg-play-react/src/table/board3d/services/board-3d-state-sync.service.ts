@@ -7,7 +7,12 @@ import {
   CardTag,
   SuperType,
   Card,
+  Format,
+  GamePhase,
   type CardTarget,
+  canOpAttackerStrike,
+  isOnePieceFormat,
+  boardTargetToActingPlayerTarget,
 } from 'ptcg-server';
 import { Vector3, Scene, Object3D, PerspectiveCamera, Texture } from 'three';
 import { Board3dCard } from '../board-3d-card';
@@ -227,7 +232,9 @@ export class Board3dStateSyncService {
         'bottomPlayer',
         isOwner,
         freezeDiscardVisualForPlayerId ?? null,
-        freezeSupporterClearForPlayerId ?? null
+        freezeSupporterClearForPlayerId ?? null,
+        gameState,
+        currentPlayerId,
       );
     }
 
@@ -239,7 +246,9 @@ export class Board3dStateSyncService {
         'topPlayer',
         isOwner,
         freezeDiscardVisualForPlayerId ?? null,
-        freezeSupporterClearForPlayerId ?? null
+        freezeSupporterClearForPlayerId ?? null,
+        gameState,
+        currentPlayerId,
       );
     }
 
@@ -275,11 +284,14 @@ export class Board3dStateSyncService {
     position: 'topPlayer' | 'bottomPlayer',
     isOwner: boolean,
     freezeDiscardVisualForPlayerId: number | null,
-    freezeSupporterClearForPlayerId: number | null
+    freezeSupporterClearForPlayerId: number | null,
+    gameState: LocalGameState,
+    currentPlayerId: number,
   ): Promise<void> {
     const rotation = position === 'topPlayer' ? 180 : 0;
     const playerPrefix = `${position}_${player.id}`;
     const playerType = position === 'topPlayer' ? PlayerType.TOP_PLAYER : PlayerType.BOTTOM_PLAYER;
+    const state = gameState.state;
 
     // Leader (One Piece) or Active Pokémon — back row (Active slot)
     const leaderPromise = player.leader && player.leader.cards.length > 0
@@ -343,6 +355,21 @@ export class Board3dStateSyncService {
 
     await Promise.all([leaderPromise, activePromise, supporterPromise]);
 
+    if (player.leader && player.leader.cards.length > 0) {
+      const leaderMesh = this.cardsMap.get(`${playerPrefix}_leader`);
+      if (leaderMesh) {
+        this.applyOpCombatVisuals(
+          leaderMesh,
+          { player: playerType, slot: SlotType.ACTIVE, index: 0 },
+          player,
+          playerType,
+          position,
+          state,
+          currentPlayerId,
+        );
+      }
+    }
+
     // Bench Pokemon - load all in parallel
     const benchPositions = getBenchPositions(player.bench.length, playerType);
     const benchPromises = player.bench.map((benchCard, i) => {
@@ -365,6 +392,25 @@ export class Board3dStateSyncService {
       }
     });
     await Promise.all(benchPromises);
+
+    player.bench.forEach((benchCard, i) => {
+      if (!benchCard || benchCard.cards.length === 0) {
+        return;
+      }
+      const cardId = `${playerPrefix}_bench_${i}`;
+      const benchMesh = this.cardsMap.get(cardId);
+      if (benchMesh) {
+        this.applyOpCombatVisuals(
+          benchMesh,
+          { player: playerType, slot: SlotType.BENCH, index: i },
+          player,
+          playerType,
+          position,
+          state,
+          currentPlayerId,
+        );
+      }
+    });
 
     // DON!! deck stack (separate from main deck) — face-down like the main deck
     const donDeckStackId = `${playerPrefix}_don_deck`;
@@ -727,6 +773,7 @@ export class Board3dStateSyncService {
         isFaceDown,
         this.interactionScene,
         pendingPlaceDamage,
+        mainCard,
       );
     } else {
       // Clear any existing overlays for non-Pokemon cards
@@ -744,6 +791,45 @@ export class Board3dStateSyncService {
     }
   }
 
+
+  /**
+   * One Piece: rested rotation and attack-disabled dimming on leaders and bench characters.
+   */
+  private applyOpCombatVisuals(
+    cardMesh: Board3dCard,
+    cardTarget: CardTarget,
+    boardPlayer: Player,
+    boardPlayerType: PlayerType,
+    position: 'topPlayer' | 'bottomPlayer',
+    state: import('ptcg-server').State,
+    currentPlayerId: number,
+  ): void {
+    if (!isOnePieceFormat(state)) {
+      cardMesh.setRested(false, position === 'topPlayer');
+      cardMesh.setDimmed(false);
+      return;
+    }
+
+    const isLeader = cardTarget.slot === SlotType.ACTIVE;
+    const rested = isLeader
+      ? boardPlayer.leaderRested
+      : (boardPlayer.bench[cardTarget.index]?.opRested ?? false);
+    cardMesh.setRested(rested, position === 'topPlayer');
+
+    const activePlayer = state.players[state.activePlayer];
+    const isOwnTurn =
+      state.phase === GamePhase.PLAYER_TURN
+      && activePlayer?.id === currentPlayerId
+      && boardPlayer.id === currentPlayerId;
+
+    if (isOwnTurn) {
+      const serverTarget = boardTargetToActingPlayerTarget(cardTarget, boardPlayerType);
+      const canAttack = canOpAttackerStrike(state, activePlayer, serverTarget);
+      cardMesh.setDimmed(!canAttack);
+    } else {
+      cardMesh.setDimmed(false);
+    }
+  }
 
   /**
    * Remove a card from the scene
@@ -1044,11 +1130,12 @@ export class Board3dStateSyncService {
       if (isSelectionMode) {
         const isEligible = interactionService.isTargetEligible(cardTarget);
         const isSelected = interactionService.isTargetSelected(cardTarget);
+        const isOpBattle = interactionService.isOpBattleSelectionActive();
 
         if (isSelected) {
-          card.setOutline(true, 0x4ade80); // Green for selected
+          card.setOutline(true, 0x4ade80); // Green for selected attacker
         } else if (isEligible) {
-          card.setOutline(true, 0xffffff); // White for selectable
+          card.setOutline(true, isOpBattle ? 0xfbbf24 : 0xffffff); // Amber for attack targets
         } else {
           card.setOutline(false);
         }

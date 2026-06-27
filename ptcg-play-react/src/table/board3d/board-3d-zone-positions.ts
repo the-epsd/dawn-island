@@ -29,8 +29,8 @@ export const ZONE_POSITIONS = {
     prizes: new Vector3(-18, 0.1, 20),
     /** Beside supporter on the leader row (supporter x + 6). */
     deck: new Vector3(12, 0.1, 21),
-    /** Beside DON!! deck on the cost row (bench slot 0 x − 3). */
-    discard: new Vector3(-11, 0.1, 25),
+    /** Under main deck, on the DON!! cost row (deck x, donRowAnchor z). */
+    discard: new Vector3(12, 0.1, 25),
     lostZone: new Vector3(-10, 0.1, 18),
     /** Z of the DON!! cost row (deck x aligns with bench slot 0). */
     donRowAnchor: new Vector3(0, 0.1, 25),
@@ -52,8 +52,8 @@ export const ZONE_POSITIONS = {
     prizes: new Vector3(20, 0.1, 8),
     /** Beside supporter on the leader row (supporter x − 6). */
     deck: new Vector3(-12, 0.1, 7),
-    /** Beside DON!! deck on the cost row (bench slot 0 x + 3). */
-    discard: new Vector3(11, 0.1, 3),
+    /** Under main deck, on the DON!! cost row (deck x, donRowAnchor z). */
+    discard: new Vector3(-12, 0.1, 3),
     lostZone: new Vector3(-10, 0.1, 10),
     /** DON!! cost row — below leader toward top edge (mirrors bottomPlayer leader 21 → DON 25). */
     donRowAnchor: new Vector3(0, 0.1, 3),
@@ -102,8 +102,8 @@ export const MOBILE_ZONE_POSITIONS = {
     prizes: new Vector3(-18, 0.1, 20),
     /** Beside supporter on the leader row (supporter x + 6). */
     deck: new Vector3(12, 0.1, 21),
-    /** Beside DON!! deck on the cost row (bench slot 0 x − 3). */
-    discard: new Vector3(-11, 0.1, 25),
+    /** Under main deck, on the DON!! cost row (deck x, donRowAnchor z). */
+    discard: new Vector3(12, 0.1, 25),
     lostZone: new Vector3(-10, 0.1, 18),
     donRowAnchor: new Vector3(0, 0.1, 25),
   },
@@ -124,8 +124,8 @@ export const MOBILE_ZONE_POSITIONS = {
     prizes: new Vector3(20, 0.1, 8),
     /** Beside supporter on the leader row (supporter x − 6). */
     deck: new Vector3(-12, 0.1, 7),
-    /** Beside DON!! deck on the cost row (bench slot 0 x + 3). */
-    discard: new Vector3(11, 0.1, 3),
+    /** Under main deck, on the DON!! cost row (deck x, donRowAnchor z). */
+    discard: new Vector3(-12, 0.1, 3),
     lostZone: new Vector3(-10, 0.1, 10),
     /** DON!! cost row — below leader toward top edge (mirrors bottomPlayer leader 21 → DON 25). */
     donRowAnchor: new Vector3(0, 0.1, 3),

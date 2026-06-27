@@ -5,7 +5,8 @@ import {
   UseStadiumAction, GameLog,
   UseTrainerAbilityAction,
   UseEnergyAbilityAction,
-  ConcedeAction
+  ConcedeAction,
+  OpBattleAction,
 } from '../../game';
 import { SandboxModifyPlayerAction } from '../../game/store/actions/sandbox-modify-player-action';
 import { SandboxModifyGameStateAction } from '../../game/store/actions/sandbox-modify-game-state-action';
@@ -52,6 +53,7 @@ export class GameSocket {
     this.socket.addListener('game:action:trainerAbility', this.trainerAbility.bind(this));
     this.socket.addListener('game:action:energyAbility', this.energyAbility.bind(this));
     this.socket.addListener('game:action:attack', this.attack.bind(this));
+    this.socket.addListener('game:action:opBattle', this.opBattle.bind(this));
     this.socket.addListener('game:action:stadium', this.stadium.bind(this));
     this.socket.addListener('game:action:play', this.playGame.bind(this));
     this.socket.addListener('game:action:playCard', this.playCard.bind(this));
@@ -252,6 +254,18 @@ export class GameSocket {
 
   private attack(params: { gameId: number, attack: string }, response: Response<void>) {
     const action = new AttackAction(this.actorIdForGameId(params.gameId), params.attack);
+    this.dispatch(params.gameId, action, response);
+  }
+
+  private opBattle(
+    params: { gameId: number, attacker: CardTarget, defender: CardTarget },
+    response: Response<void>,
+  ) {
+    const action = new OpBattleAction(
+      this.actorIdForGameId(params.gameId),
+      params.attacker,
+      params.defender,
+    );
     this.dispatch(params.gameId, action, response);
   }
 
@@ -492,6 +506,7 @@ export class GameSocket {
     this.socket.removeListener('game:action:ability');
     this.socket.removeListener('game:action:trainerAbility');
     this.socket.removeListener('game:action:attack');
+    this.socket.removeListener('game:action:opBattle');
     this.socket.removeListener('game:action:stadium');
     this.socket.removeListener('game:action:play');
     this.socket.removeListener('game:action:playCard');

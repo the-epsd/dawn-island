@@ -33,6 +33,7 @@ export class Board3dCard {
   private backMaterialKey?: string;
   private holoMesh: Mesh | null = null;
   private holoMaterial: ShaderMaterial | null = null;
+  private dimOverlayMesh: Mesh | null = null;
 
   constructor(
     frontTexture: Texture,
@@ -111,6 +112,9 @@ export class Board3dCard {
 
     // Store mask texture for use in outline
     this.maskTexture = maskTexture;
+
+    // Shared face materials must stay at full brightness; per-card dim uses an overlay.
+    (materials[4] as MeshStandardMaterial).color.setHex(0xffffff);
   }
 
   public getGroup(): Group {
@@ -158,6 +162,41 @@ export class Board3dCard {
 
   public setRotation(rotation: number): void {
     this.group.rotation.y = (rotation * Math.PI) / 180;
+  }
+
+  /** One Piece rested (tapped) — 90° clockwise in the board plane. */
+  public setRested(rested: boolean, topPlayerCard: boolean): void {
+    const z = rested ? (topPlayerCard ? Math.PI / 2 : -Math.PI / 2) : 0;
+    this.cardMesh.rotation.z = z;
+    this.overlayAnchor.rotation.z = z;
+  }
+
+  /** Dim the card face when it cannot attack (summoning sickness, already rested, etc.). */
+  public setDimmed(dimmed: boolean): void {
+    // Face materials are shared by texture — never tint them or all copies of the card dim together.
+    const materials = this.cardMesh.material as MeshStandardMaterial[];
+    if (materials[4].color.getHex() !== 0xffffff) {
+      materials[4].color.setHex(0xffffff);
+    }
+
+    if (dimmed) {
+      if (!this.dimOverlayMesh) {
+        const mat = new MeshBasicMaterial({
+          color: 0x000000,
+          transparent: true,
+          opacity: 0.45,
+          depthWrite: false,
+          side: DoubleSide,
+        });
+        this.dimOverlayMesh = new Mesh(new PlaneGeometry(2.5, 3.5), mat);
+        this.dimOverlayMesh.renderOrder = 9;
+        this.dimOverlayMesh.position.set(0, 0, 0.03);
+        this.cardMesh.add(this.dimOverlayMesh);
+      }
+      this.dimOverlayMesh.visible = true;
+    } else if (this.dimOverlayMesh) {
+      this.dimOverlayMesh.visible = false;
+    }
   }
 
   /** Asleep / confused / paralyzed in-plane tilt (matches Angular board-card). */
@@ -297,6 +336,12 @@ export class Board3dCard {
 
   public dispose(): void {
     this.setHolo(null);
+    if (this.dimOverlayMesh) {
+      this.dimOverlayMesh.geometry.dispose();
+      (this.dimOverlayMesh.material as MeshBasicMaterial).dispose();
+      this.cardMesh.remove(this.dimOverlayMesh);
+      this.dimOverlayMesh = null;
+    }
     // Don't dispose shared materials or outline materials - they're cached and reused
     // Just remove the outline mesh from the group
     if (this.outlineMesh) {

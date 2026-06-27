@@ -1,5 +1,5 @@
 import { Action } from '../actions/action';
-import { PassTurnAction, RetreatAction, RetreatStartAction, AttackAction, UseAbilityAction, UseStadiumAction, UseTrainerAbilityAction, UseEnergyAbilityAction } from '../actions/game-actions';
+import { PassTurnAction, RetreatAction, RetreatStartAction, AttackAction, UseAbilityAction, UseStadiumAction, UseTrainerAbilityAction, UseEnergyAbilityAction, OpBattleAction } from '../actions/game-actions';
 import { State, GamePhase } from '../state/state';
 import { StoreLike } from '../store-like';
 import { GameError } from '../../game-error';
@@ -13,6 +13,8 @@ import { CheckPokemonAttacksEffect, CheckPokemonPowersEffect } from '../effects/
 import { Attack } from '../card/pokemon-types';
 import { TrainerCard } from '../card/trainer-card';
 import { EnergyCard } from '../card/energy-card';
+import { Format } from '../card/card-types';
+import { opBattleReducer } from './op-battle-reducer';
 
 export function playerTurnReducer(store: StoreLike, state: State, action: Action): State {
 
@@ -55,7 +57,15 @@ export function playerTurnReducer(store: StoreLike, state: State, action: Action
       return state;
     }
 
+    if (action instanceof OpBattleAction) {
+      return opBattleReducer(store, state, action);
+    }
+
     if (action instanceof AttackAction) {
+      if (state.gameSettings?.format === Format.ONE_PIECE) {
+        throw new GameError(GameMessage.CANNOT_USE_ATTACK);
+      }
+
       const player = state.players[state.activePlayer];
 
       if (player === undefined || player.id !== action.clientId) {
