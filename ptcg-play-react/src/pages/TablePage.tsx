@@ -1,0 +1,694 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import type { Card, CardList, Player } from 'ptcg-server';
+import { GamePhase } from 'ptcg-server';
+import { useAuth } from '../context/AuthContext';
+import { useDeckCardScanUrl } from '../context/CardImagesContext';
+import { useCoreSession } from '../context/CoreSessionContext';
+import { useSettings } from '../context/SettingsContext';
+import tablePageStyles from './TablePage.module.css';
+import { getSocketManager } from '../socket/socketManager';
+import { ApiError, formatUnknownError } from '../api/apiError';
+import { useSnackbar } from '../context/SnackbarContext';
+import { translateGameSocketError } from '../i18n/translateGameSocketError';
+import { buildLocalGameFromMatchReplay } from '../api/replayApi';
+import type { LocalGameState } from '../table/types/localGameState';
+import { gameStateToLocal, mergeStateChange } from '../table/gameSessionUtils';
+import { BoardInteractionService } from '../table/BoardInteractionService';
+import type { Board3dGameActions } from '../table/board3d/board3dGameActions';
+import { Board3DCanvas } from '../table/board3d/Board3DCanvas';
+import { TablePromptLayer } from '../table/prompts/TablePromptLayer';
+import { TableBoardOverlay } from '../table/hud/TableBoardOverlay';
+import { GameOverOverlay } from '../table/end-game/GameOverOverlay';
+import { MatchResultsSplash } from '../table/end-game/MatchResultsSplash';
+import { SandboxControlPanel } from '../table/sandbox/SandboxControlPanel';
+import { SandboxTableHint } from '../table/sandbox/SandboxTableHint';
+import { ShellButton } from '../components/ui/ShellButton';
+import { selfPlayFocusPlayerId } from '../table/selfPlayFocusPlayerId';
+import promptStyles from '../table/prompts/TablePromptLayer.module.css';
+
+const RECONNECT_GAME_ID_KEY = 'ptcg_reconnect_gameId';
+const CHOOSE_PRIZE_POST_KO_DELAY_MS = 350;
+const END_GAME_SPLASH_DELAY_MS = 2000;
+
+const EMPTY_CATALOG: Card[] = [];
+
+function persistGameId(gameId: number): void {
+  try {
+    localStorage.setItem(RECONNECT_GAME_ID_KEY, String(gameId));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearPersistedGameId(): void {
+  try {
+    localStorage.removeItem(RECONNECT_GAME_ID_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+type TableView = {
+  bottomPlayer: Player;
+  topPlayer: Player;
+  bottomHand: CardList;
+  topHand: CardList;
+  isPlaying: boolean;
+  isObserver: boolean;
+};
+
+export function TablePage() {
+  const { t } = useTranslation();
+  const { showSnackbar } = useSnackbar();
+  const { gameId: gameIdParam, matchId: matchIdParam } = useParams<{
+    gameId?: string;
+    matchId?: string;
+  }>();
+  const navigate = useNavigate();
+  const { cardsInfo, serverConfig, user } = useAuth();
+  const catalog = useMemo(() => cardsInfo?.cards ?? EMPTY_CATALOG, [cardsInfo?.cards]);
+  const getScanUrl = useDeckCardScanUrl(serverConfig?.scansUrl);
+  const { clientId, connected: coreConnected } = useCoreSession();
+  const { has3dBoardAccess, use3dBoardDefault, defaultSandboxMode } = useSettings();
+
+  const hasReplayParam = matchIdParam != null && matchIdParam !== '';
+  const replayMatchId = hasReplayParam ? Number(matchIdParam) : NaN;
+  const serverGameId = gameIdParam != null && gameIdParam !== '' ? Number(gameIdParam) : NaN;
+  const isReplayRoute = hasReplayParam;
+  const isLiveRoute = Number.isFinite(serverGameId);
+  const [localGame, setLocalGame] = useState<LocalGameState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [endFlowStage, setEndFlowStage] = useState<'splash' | 'stats' | null>(null);
+  const [leaveConfirmKind, setLeaveConfirmKind] = useState<'live' | 'replay' | null>(null);
+  const [suppressChoosePrizePrompt, setSuppressChoosePrizePrompt] = useState(false);
+  const [boardFps, setBoardFps] = useState<number | null>(null);
+  const clientIdRef = useRef(clientId);
+  clientIdRef.current = clientId;
+  const choosePrizeRevealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const boardInteraction = useMemo(() => new BoardInteractionService(), []);
+
+  const onGameSocketError = useCallback(
+    (e: unknown) => {
+      const raw = formatUnknownError(e);
+      showSnackbar(translateGameSocketError(t, raw), { variant: 'error' });
+    },
+    [showSnackbar, t],
+  );
+
+  const onKoSequenceActiveChange = useCallback((active: boolean) => {
+    if (choosePrizeRevealTimeoutRef.current != null) {
+      clearTimeout(choosePrizeRevealTimeoutRef.current);
+      choosePrizeRevealTimeoutRef.current = null;
+    }
+    if (active) {
+      setSuppressChoosePrizePrompt(true);
+      return;
+    }
+    choosePrizeRevealTimeoutRef.current = window.setTimeout(() => {
+      choosePrizeRevealTimeoutRef.current = null;
+      setSuppressChoosePrizePrompt(false);
+    }, CHOOSE_PRIZE_POST_KO_DELAY_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (choosePrizeRevealTimeoutRef.current != null) {
+        clearTimeout(choosePrizeRevealTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const onBoardFps = useCallback((fps: number) => {
+    setBoardFps(fps);
+  }, []);
+
+  const socketGameActions: Board3dGameActions = useMemo(() => {
+    const socket = getSocketManager();
+    const wrap = (p: Promise<unknown>): Promise<void> =>
+      p
+        .then(() => undefined)
+        .catch((e: unknown) => {
+          onGameSocketError(e);
+        });
+    return {
+      playCardAction: (gameId, handIndex, target) =>
+        wrap(socket.emit('game:action:playCard', { gameId, handIndex, target })),
+      retreatAction: (gameId, to) => wrap(socket.emit('game:action:retreat', { gameId, to })),
+      trainerAbility: (gameId, ability, target) =>
+        wrap(socket.emit('game:action:trainerAbility', { gameId, ability, target })),
+      energyAbility: (gameId, ability, target) =>
+        wrap(socket.emit('game:action:energyAbility', { gameId, ability, target })),
+      ability: (gameId, ability, target) =>
+        wrap(socket.emit('game:action:ability', { gameId, ability, target })),
+      stadium: (gameId) => wrap(socket.emit('game:action:stadium', { gameId })),
+      attack: (gameId, attack) => wrap(socket.emit('game:action:attack', { gameId, attack })),
+      retreatStart: (gameId) => wrap(socket.emit('game:action:retreatStart', { gameId })),
+      resolvePrompt: (gameId, promptId, result) =>
+        wrap(socket.emit('game:action:resolvePrompt', { gameId, id: promptId, result })),
+    };
+  }, [onGameSocketError]);
+
+  const replayNoopGameActions: Board3dGameActions = useMemo(
+    () => ({
+      playCardAction: async () => { },
+      retreatAction: async () => { },
+      trainerAbility: async () => { },
+      energyAbility: async () => { },
+      ability: async () => { },
+      stadium: async () => { },
+      attack: async () => { },
+      retreatStart: async () => { },
+      resolvePrompt: async () => { },
+    }),
+    [],
+  );
+
+  const gameActions: Board3dGameActions =
+    localGame?.replay != null ? replayNoopGameActions : socketGameActions;
+
+  const onResolvePrompt = useCallback(
+    (promptId: number, result: unknown) => {
+      if (!isLiveRoute || !Number.isFinite(serverGameId)) {
+        return;
+      }
+      void getSocketManager()
+        .emit('game:action:resolvePrompt', {
+          gameId: serverGameId,
+          id: promptId,
+          result,
+        })
+        .catch(onGameSocketError);
+    },
+    [isLiveRoute, onGameSocketError, serverGameId],
+  );
+
+  const registerGameSocket = useCallback(
+    (gameId: number) => {
+      const socket = getSocketManager();
+      const raw = socket.raw;
+
+      const onState = (data: { stateData: string; playerStats?: import('ptcg-server').PlayerStats[] }) => {
+        setLocalGame((g) => {
+          if (!g || g.gameId !== gameId) return g;
+          const next = mergeStateChange(g, data.stateData, data.playerStats);
+          boardInteraction.updateGameLogs(next.logs);
+          if (next.state.phase === GamePhase.FINISHED) {
+            clearPersistedGameId();
+          }
+          return next;
+        });
+      };
+
+      const onBasic = (data: {
+        playerId: number;
+        cardId: number | string;
+        slot: string;
+        index?: number;
+      }) => {
+        boardInteraction.triggerBasicAnimation(data);
+      };
+      const onEvo = (data: {
+        playerId: number;
+        cardId: number | string;
+        slot: string;
+        index?: number;
+      }) => {
+        boardInteraction.triggerEvolutionAnimation(data);
+      };
+      const onAttack = (data: {
+        playerId: number;
+        cardId: number | string;
+        slot: string;
+        index?: number;
+      }) => {
+        boardInteraction.triggerAttackAnimation(data);
+      };
+      const onAbility = (data: {
+        playerId: number;
+        cardId: number | string;
+        slot: string;
+        index?: number;
+        abilityName: string;
+      }) => {
+        boardInteraction.triggerAbilityAnimation(data);
+      };
+      const onCoin = (data: { playerId: number; result: boolean }) => {
+        boardInteraction.triggerCoinFlipAnimation(data.result, data.playerId);
+      };
+
+      raw.on(`game[${gameId}]:stateChange`, onState);
+      raw.on(`game[${gameId}]:playBasicAnimation`, onBasic);
+      raw.on(`game[${gameId}]:evolution`, onEvo);
+      raw.on(`game[${gameId}]:attack`, onAttack);
+      raw.on(`game[${gameId}]:ability`, onAbility);
+      raw.on(`game[${gameId}]:coinFlip`, onCoin);
+
+      return () => {
+        raw.off(`game[${gameId}]:stateChange`, onState);
+        raw.off(`game[${gameId}]:playBasicAnimation`, onBasic);
+        raw.off(`game[${gameId}]:evolution`, onEvo);
+        raw.off(`game[${gameId}]:attack`, onAttack);
+        raw.off(`game[${gameId}]:ability`, onAbility);
+        raw.off(`game[${gameId}]:coinFlip`, onCoin);
+      };
+    },
+    [boardInteraction],
+  );
+
+  useEffect(() => {
+    if (isReplayRoute) {
+      return;
+    }
+    if (!Number.isFinite(serverGameId)) {
+      setError(t('REACT_INVALID_GAME', 'Invalid game'));
+      return;
+    }
+
+    if (!cardsInfo) {
+      return;
+    }
+
+    let cancelled = false;
+    let unregister: (() => void) | undefined;
+
+    void (async () => {
+      try {
+        const socket = getSocketManager();
+        const gs = await socket.emit<number, import('ptcg-server').GameState>('game:join', serverGameId);
+        if (cancelled) return;
+        const local = gameStateToLocal(gs);
+        setLocalGame(local);
+        boardInteraction.updateGameLogs(local.logs);
+        const isPlayer = local.state.players.some((p) => p.id === clientIdRef.current);
+        if (isPlayer) {
+          persistGameId(serverGameId);
+        }
+        unregister = registerGameSocket(serverGameId);
+      } catch (e) {
+        if (!cancelled) {
+          const raw = e instanceof ApiError ? e.message : formatUnknownError(e);
+          setError(translateGameSocketError(t, raw));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unregister?.();
+      boardInteraction.endBoardSelection();
+      clearPersistedGameId();
+    };
+  }, [isReplayRoute, serverGameId, cardsInfo, boardInteraction, registerGameSocket, t]);
+
+  useEffect(() => {
+    if (!isReplayRoute) {
+      return;
+    }
+    if (!Number.isFinite(replayMatchId)) {
+      setError(t('REACT_INVALID_GAME', 'Invalid game'));
+      return;
+    }
+    if (!cardsInfo) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const local = await buildLocalGameFromMatchReplay(replayMatchId);
+        if (!cancelled) {
+          setLocalGame(local);
+          boardInteraction.updateGameLogs(local.logs);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(formatUnknownError(e));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      boardInteraction.endBoardSelection();
+    };
+  }, [isReplayRoute, replayMatchId, cardsInfo, boardInteraction, t]);
+
+  useEffect(() => {
+    if (!localGame || localGame.replay || !clientId) {
+      return;
+    }
+    if (!Number.isFinite(serverGameId) || localGame.gameId !== serverGameId) {
+      return;
+    }
+    const isPlayer = localGame.state.players.some((p) => p.id === clientId);
+    if (isPlayer) {
+      persistGameId(serverGameId);
+    }
+  }, [localGame, clientId, serverGameId]);
+
+  useEffect(() => {
+    setEndFlowStage(null);
+    setLeaveConfirmKind(null);
+  }, [isReplayRoute, replayMatchId, serverGameId]);
+
+  useEffect(() => {
+    if (!localGame) {
+      return;
+    }
+    const finished = localGame.state.phase === GamePhase.FINISHED && !localGame.gameOver;
+    if (!finished) {
+      setEndFlowStage(null);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setEndFlowStage((s) => (s === null ? 'splash' : s));
+    }, END_GAME_SPLASH_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [localGame?.localId, localGame?.state.phase, localGame?.state.winner, localGame?.gameOver]);
+
+  useEffect(() => {
+    if (localGame?.state.phase === GamePhase.FINISHED) {
+      setLeaveConfirmKind(null);
+    }
+  }, [localGame?.state.phase]);
+
+  const tableClientId = useMemo(() => {
+    if (!localGame) {
+      return undefined;
+    }
+    if (localGame.replay != null) {
+      return clientId != null && clientId !== 0
+        ? clientId
+        : (localGame.state.players[0]?.id ?? 0);
+    }
+    // Self-play uses in-game focus; must not wait on core:getInfo (clientId may still be 0).
+    if (localGame.state.gameSettings?.selfPlay === true) {
+      return selfPlayFocusPlayerId(localGame.state);
+    }
+    if (clientId == null || clientId === 0) {
+      return undefined;
+    }
+    return clientId;
+  }, [localGame, clientId]);
+
+  const tableView = useMemo((): TableView | null => {
+    if (!localGame || tableClientId == null) {
+      return null;
+    }
+    const players = localGame.state.players;
+    if (players.length < 2) {
+      return null;
+    }
+    const isPlaying = players.some((p) => p.id === tableClientId);
+    let bottom: Player | undefined;
+    let top: Player | undefined;
+    if (isPlaying) {
+      bottom = players.find((p) => p.id === tableClientId);
+      top = players.find((p) => p.id !== tableClientId);
+    } else {
+      bottom = players[0];
+      top = players[1];
+    }
+    if (!bottom || !top) {
+      return null;
+    }
+    if (localGame.switchSide && !localGame.state.gameSettings?.selfPlay) {
+      const tmp = bottom;
+      bottom = top;
+      top = tmp;
+    }
+    return {
+      bottomPlayer: bottom,
+      topPlayer: top,
+      bottomHand: bottom.hand,
+      topHand: top.hand,
+      isPlaying,
+      isObserver: !isPlaying,
+    };
+  }, [localGame, tableClientId]);
+
+  const toggleSwitchSides = useCallback(() => {
+    setLocalGame((g) => (g ? { ...g, switchSide: !g.switchSide } : g));
+  }, []);
+
+  const onPassTurn = useCallback(() => {
+    if (!isLiveRoute || !Number.isFinite(serverGameId)) {
+      return;
+    }
+    void getSocketManager()
+      .emit('game:action:passTurn', { gameId: serverGameId })
+      .catch(onGameSocketError);
+  }, [isLiveRoute, onGameSocketError, serverGameId]);
+
+  const onLeave = useCallback(() => {
+    const leaveReplay = isReplayRoute || localGame?.replay != null;
+    if (!leaveReplay && localGame?.deleted) {
+      return;
+    }
+    setLeaveConfirmKind(leaveReplay ? 'replay' : 'live');
+  }, [isReplayRoute, localGame?.deleted, localGame?.replay]);
+
+  const dismissLeaveConfirm = useCallback(() => {
+    setLeaveConfirmKind(null);
+  }, []);
+
+  const onLeaveConfirm = useCallback(() => {
+    const kind = leaveConfirmKind;
+    setLeaveConfirmKind(null);
+    if (!kind) {
+      return;
+    }
+    if (kind === 'replay') {
+      navigate('/spectate');
+      return;
+    }
+    if (localGame?.deleted) {
+      return;
+    }
+    if (!Number.isFinite(serverGameId)) {
+      return;
+    }
+    clearPersistedGameId();
+    void getSocketManager()
+      .emit('game:concede', { gameId: serverGameId })
+      .catch(onGameSocketError);
+  }, [leaveConfirmKind, localGame?.deleted, navigate, onGameSocketError, serverGameId]);
+
+  const onSendChat = useCallback(
+    (message: string) => {
+      if (!isLiveRoute || !Number.isFinite(serverGameId)) {
+        return;
+      }
+      void getSocketManager()
+        .emit('game:action:appendLog', { gameId: serverGameId, message })
+        .catch(onGameSocketError);
+    },
+    [isLiveRoute, onGameSocketError, serverGameId],
+  );
+
+  const onReplayStep = useCallback(
+    (position: number, state: LocalGameState['state'], logs: LocalGameState['logs']) => {
+      setLocalGame((g) => (g ? { ...g, state, logs, replayPosition: position } : g));
+      boardInteraction.updateGameLogs(logs);
+    },
+    [boardInteraction],
+  );
+
+  const onGameOverConfirm = useCallback(() => {
+    clearPersistedGameId();
+    navigate(localGame?.replay != null ? '/spectate' : '/games');
+  }, [localGame?.replay, navigate]);
+
+  const show3d = has3dBoardAccess && use3dBoardDefault;
+
+  if (error) {
+    const backTarget = isReplayRoute ? '/spectate' : '/games';
+    return (
+      <div style={{ padding: 24 }}>
+        <p>{error}</p>
+        <button type="button" onClick={() => navigate(backTarget)}>
+          {t('BUTTON_BACK')}
+        </button>
+      </div>
+    );
+  }
+
+  if (!localGame) {
+    return <div style={{ padding: 24 }}>{t('REACT_LOADING')}</div>;
+  }
+
+  if (tableClientId == null) {
+    return (
+      <div style={{ padding: 24 }}>
+        {coreConnected ? t('REACT_LOADING') : t('REACT_CONNECTING', 'Connecting...')}
+      </div>
+    );
+  }
+
+  /** Only normal (non–self-play) games wait for a second human; self-play has no “opponent joining”. */
+  const waitingForLiveOpponent =
+    localGame.replay == null &&
+    localGame.state.gameSettings?.selfPlay !== true &&
+    localGame.state.players.length < 2;
+
+  if (waitingForLiveOpponent) {
+    const backTarget = isReplayRoute ? '/spectate' : '/games';
+    return (
+      <div style={{ padding: 24 }}>
+        <p>{t('REACT_WAITING_FOR_OPPONENT', 'Waiting for opponent to join...')}</p>
+        <ShellButton type="button" variant="secondary" onClick={() => navigate(backTarget)}>
+          {t('BUTTON_BACK')}
+        </ShellButton>
+      </div>
+    );
+  }
+
+  /** Should not happen when ≥2 players and tableClientId is set; keep a safe fallback. */
+  if (!tableView) {
+    return <div style={{ padding: 24 }}>{t('REACT_LOADING')}</div>;
+  }
+
+  if (!show3d) {
+    const backTarget = isReplayRoute ? '/spectate' : '/games';
+    return (
+      <div style={{ padding: 24 }}>
+        <p>{t('REACT_TABLE_3D_DISABLED', 'Enable the 3D board in Settings and ensure your account has access.')}</p>
+        <button type="button" onClick={() => navigate(backTarget)}>
+          {t('BUTTON_BACK')}
+        </button>
+      </div>
+    );
+  }
+
+  const { bottomPlayer, topPlayer, bottomHand, topHand, isPlaying, isObserver } = tableView;
+
+  const sandboxGameEnabled = Boolean(localGame.state.gameSettings?.sandboxMode);
+  const showSandboxDock =
+    user?.roleId === 4 && localGame.replay == null && (sandboxGameEnabled || defaultSandboxMode);
+
+  const showEndGame =
+    localGame.state.phase === GamePhase.FINISHED &&
+    !localGame.gameOver &&
+    (clientId != null || localGame.replay != null);
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+        }}
+      >
+        {showSandboxDock ? (
+          <div className={tablePageStyles.sandboxDock}>
+            {sandboxGameEnabled ? (
+              <SandboxControlPanel
+                gameId={localGame.gameId}
+                gameState={localGame.state}
+                players={localGame.state.players}
+                clientId={tableClientId}
+              />
+            ) : (
+              <SandboxTableHint />
+            )}
+          </div>
+        ) : null}
+      <Board3DCanvas
+        gameState={localGame}
+        topPlayer={topPlayer}
+        bottomPlayer={bottomPlayer}
+        bottomPlayerHand={bottomHand}
+        topPlayerHand={topHand}
+        clientId={tableClientId}
+        catalog={catalog}
+        boardInteraction={boardInteraction}
+        gameActions={gameActions}
+        onKoSequenceActiveChange={onKoSequenceActiveChange}
+        onBoardFps={onBoardFps}
+      />
+      <TableBoardOverlay
+        localGame={localGame}
+        clientId={tableClientId}
+        topPlayer={topPlayer}
+        bottomPlayer={bottomPlayer}
+        isPlaying={isPlaying}
+        isObserver={isObserver}
+        onPassTurn={onPassTurn}
+        onLeave={onLeave}
+        onSwitchSides={toggleSwitchSides}
+        onSendChat={onSendChat}
+        onReplayStep={onReplayStep}
+        boardFps={boardFps}
+      />
+      <TablePromptLayer
+        localGame={localGame}
+        clientId={tableClientId}
+        catalog={catalog}
+        getScanUrl={getScanUrl}
+        boardInteraction={boardInteraction}
+        onResolvePrompt={onResolvePrompt}
+        suppressChoosePrizePrompt={suppressChoosePrizePrompt}
+      />
+      {showEndGame && endFlowStage === 'splash' ? (
+        <MatchResultsSplash
+          localGame={localGame}
+          clientId={tableClientId}
+          onDismiss={() => setEndFlowStage('stats')}
+        />
+      ) : null}
+      {showEndGame && endFlowStage === 'stats' ? (
+        <GameOverOverlay
+          localGame={localGame}
+          clientId={tableClientId}
+          getScanUrl={getScanUrl}
+          onConfirm={onGameOverConfirm}
+        />
+      ) : null}
+      {leaveConfirmKind !== null ? (
+        <div
+          className={promptStyles.backdrop}
+          role="presentation"
+          style={{ zIndex: 1600 }}
+        >
+          <div className={promptStyles.panel} role="dialog" aria-modal="true">
+            <h2 className={promptStyles.title}>{t('ALERT_CONFIRM_TITLE')}</h2>
+            <p className={promptStyles.message}>
+              {leaveConfirmKind === 'replay'
+                ? t('REACT_LEAVE_REPLAY')
+                : t('MAIN_LEAVE_GAME')}
+            </p>
+            <div className={promptStyles.actions}>
+              <ShellButton type="button" variant="secondary" onClick={dismissLeaveConfirm}>
+                {t('BUTTON_CANCEL')}
+              </ShellButton>
+              <ShellButton
+                type="button"
+                onClick={onLeaveConfirm}
+                disabled={leaveConfirmKind === 'live' && !!localGame.deleted}
+              >
+                {t('BUTTON_OK')}
+              </ShellButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      </div>
+    </div>
+  );
+}
